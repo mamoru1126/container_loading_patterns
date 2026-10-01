@@ -15,7 +15,7 @@ const state = {
   containerId: 'iso20',
   policy: 'learned',
   buffer: 0,
-  sort: false,
+  sort: true,
   total: 300,
   speed: 3,
   seed: 1,
