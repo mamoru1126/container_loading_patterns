@@ -21,7 +21,7 @@ async function shot(name, { width, height, scheme = 'light', act } = {}) {
   });
   await page.route('**/*', (route) => (route.request().url().startsWith('https://fonts.') ? route.abort() : route.continue()));
   await page.setContent(html, { waitUntil: 'load' });
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(5000);
   if (act) await act(page);
   await page.screenshot({ path: join(outDir, `${name}.png`), fullPage: true });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -47,7 +47,7 @@ await shot('cat-color-40ft', {
   act: async (page) => {
     await page.selectOption('#container', 'iso40');
     await page.click('[data-total="80"]');
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(9000);
     await page.click('[data-color="cat"]');
     await page.waitForTimeout(500);
   },

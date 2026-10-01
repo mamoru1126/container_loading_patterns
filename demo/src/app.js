@@ -1,5 +1,6 @@
 import { CONTAINERS, TYPES, CATS, DEFAULT_COUNTS, generateItems, countsForTotal } from './catalog.js';
 import { planLoad } from './engine.js';
+import { GeneticPlanner } from './ga.js';
 import { validatePlan } from './check.js';
 import { Renderer, OrbitCamera, attachOrbit, M4, lin } from './gl.js';
 import { buildItemGeo, buildContainerGeo, buildDunnageGeo, boxEdges } from './models.js';
@@ -546,8 +547,13 @@ function renderPlans() {
     b.setAttribute('aria-selected', String(i === state.planIdx));
     const m = p.metrics;
     const best = i === state.result.bestIdx ? '<span class="badge">おすすめ</span>' : '';
-    b.innerHTML = `<span class="k"><span>案${'ABC'[i]}</span>${best}</span><span class="t">${p.strategy.name}</span>
-      <span class="s">${m.loaded}/${m.total}台 ・ 容積 ${(m.volUtil * 100).toFixed(0)}% ・ 重心 ${m.cogOffPct >= 0 ? '+' : ''}${m.cogOffPct.toFixed(1)}%</span>`;
+    const ga = p.strategy.id === 'ga';
+    const running = ga && state.ga && !state.ga.done;
+    const tag = ga ? (running ? `<span class="evo">進化中 ${state.ga.gen}/${state.ga.generations}世代</span>` : '<span class="evo">AI</span>') : '';
+    b.innerHTML = `<span class="k"><span>案${'ABCD'[i]}</span>${best || tag}</span><span class="t">${p.strategy.name}</span>
+      <span class="s">${m.loaded}/${m.total}台 ・ 容積 ${(m.volUtil * 100).toFixed(0)}% ・ 長さ ${(m.usedLen / 1000).toFixed(2)}m</span>
+      ${running ? `<span class="prog"><i style="width:${(state.ga.gen / state.ga.generations) * 100}%"></i></span>` : ''}`;
+    if (ga) b.classList.add('ga');
     b.title = p.strategy.desc;
     b.addEventListener('click', () => {
       state.planIdx = i;
@@ -567,7 +573,8 @@ function renderPanels() {
   if (!plan) return;
   const ct = CONTAINERS[state.containerId];
   const m = plan.metrics;
-  $('planName').textContent = `案${'ABC'[state.planIdx]} ${plan.strategy.name}`;
+  $('planName').textContent = `案${'ABCD'[state.planIdx]} ${plan.strategy.name}`;
+  renderEvolution();
   const tiles = [
     ['積載台数', `${m.loaded}<small>/ ${m.total} 台</small>`],
     ['容積率', `${(m.volUtil * 100).toFixed(1)}<small>%</small>`],
@@ -653,12 +660,98 @@ function run(resetCam) {
     state.playing = false;
     state.step = state.result.plans[state.planIdx].placements.length;
     clearItemCache();
+    startGA(ct);
     buildScene(resetCam);
     renderPlans();
     renderPanels();
     btn.disabled = false;
     btn.textContent = '積付けパターンを作る';
   }, 30);
+}
+
+// ---------- 遺伝的アルゴリズム ----------
+let gaToken = null;
+function startGA(ct) {
+  const token = {};
+  gaToken = token;
+  const items = state.items;
+  const ga = new GeneticPlanner(items, ct, { seed: state.seed, gap: state.gap, topClear: state.topClear }, {
+    population: 40,
+    generations: items.length > 120 ? 25 : 40,
+  });
+  state.ga = ga;
+  const heuristicBest = state.result.bestIdx;
+  state.result.plans[3] = ga.best;
+  let shown = ga.best;
+  const t0 = performance.now();
+  const tick = () => {
+    if (gaToken !== token) return;
+    const start = performance.now();
+    while (!ga.done && performance.now() - start < 45) ga.step();
+    state.result.plans[3] = ga.best;
+    if (ga.done) {
+      const plans = state.result.plans;
+      state.result.bestIdx = plans.reduce((bi, p, i) => (p.score > plans[bi].score ? i : bi), 0);
+      const gain = ga.best.metrics.loaded - plans[heuristicBest].metrics.loaded;
+      $('calcInfo').textContent += ` 遺伝的アルゴリズムは ${ga.gen}世代・${fmt(ga.evals)}回の評価を ${fmt((performance.now() - t0) / 1000, 1)} 秒で行い、${gain > 0 ? `積載台数を ${gain} 台増やしました` : '同じ台数で詰め方を整えました'}。`;
+      // 何も操作していなければ、よりよい案に切り替える
+      if (state.result.bestIdx === 3 && state.planIdx === heuristicBest && !state.playing && !state.selected) {
+        state.planIdx = 3;
+        state.step = ga.best.placements.length;
+      }
+    }
+    if (state.planIdx === 3 && shown !== ga.best) {
+      shown = ga.best;
+      if (!state.playing) state.step = ga.best.placements.length;
+      buildScene(false);
+      renderPanels();
+    } else if (state.planIdx === 3) renderEvolution();
+    if (ga.done && state.planIdx === 3) {
+      buildScene(false);
+      renderPanels();
+    }
+    renderPlans();
+    if (!ga.done) setTimeout(tick, 16);
+  };
+  setTimeout(tick, 60);
+}
+
+function renderEvolution() {
+  const box = $('evoBox');
+  const ga = state.ga;
+  if (!ga || state.planIdx !== 3) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const h = ga.history;
+  const W = 300;
+  const H = 86;
+  // 台数が増えたなら台数、同じなら使用長さ（短いほどよい）を描く
+  const byCount = h[h.length - 1].loaded !== h[0].loaded;
+  const val = (r) => (byCount ? r.loaded : r.usedLen / 1000);
+  const ys = h.map(val);
+  let lo = Math.min(...ys);
+  let hi = Math.max(...ys);
+  if (hi - lo < (byCount ? 1 : 0.05)) {
+    hi += byCount ? 1 : 0.05;
+    lo -= byCount ? 1 : 0.05;
+  }
+  const X = (g) => 40 + (g / ga.generations) * (W - 48);
+  const Y = (v) => (byCount ? H - 16 - ((v - lo) / (hi - lo)) * (H - 28) : 10 + ((v - lo) / (hi - lo)) * (H - 28));
+  const path = h.map((r, i) => `${i ? 'L' : 'M'}${X(r.gen).toFixed(1)},${Y(val(r)).toFixed(1)}`).join('');
+  const last = h[h.length - 1];
+  const first = h[0];
+  const lab = (v) => (byCount ? `${v}台` : `${v.toFixed(2)}m`);
+  $('evoTitle').textContent = byCount ? '遺伝的アルゴリズムの進化（積載台数）' : '遺伝的アルゴリズムの進化（使用長さ・短いほどよい）';
+  $('evoChart').innerHTML = `<line x1="40" x2="${W - 8}" y1="${H - 16}" y2="${H - 16}" class="ax"/>
+    <path d="${path}" class="ln"/>
+    <circle cx="${X(last.gen)}" cy="${Y(val(last))}" r="3.5" class="pt"/>
+    <text x="36" y="${Y(val(first)) + 3}" class="tx" text-anchor="end">${lab(val(first))}</text>
+    <text x="${Math.min(W - 8, X(last.gen))}" y="${Math.max(10, Y(val(last)) - 7)}" class="tx" text-anchor="end">${lab(val(last))}</text>
+    <text x="40" y="${H - 3}" class="tx">第0世代</text><text x="${W - 8}" y="${H - 3}" class="tx" text-anchor="end">第${ga.generations}世代</text>`;
+  const d = last.loaded - first.loaded;
+  $('evoText').textContent = `${ga.done ? '完了' : `第${ga.gen}世代を計算中`}。最良の個体: 積載 ${last.loaded}台（初期 ${first.loaded}台${d > 0 ? `、+${d}台` : ''}）・使用長さ ${(last.usedLen / 1000).toFixed(2)} m（初期 ${(first.usedLen / 1000).toFixed(2)} m）。方針は「${ga.best.baseStrategy.name}」が選ばれています。`;
 }
 
 function boot() {

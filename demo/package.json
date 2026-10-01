@@ -6,7 +6,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "node test/engine.test.mjs",
+    "test": "node test/engine.test.mjs && node test/ga.test.mjs",
     "build": "node build.mjs"
   },
   "keywords": [],

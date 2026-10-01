@@ -141,7 +141,11 @@ function buildColumns(items, maxH, opts, strat, rng, noise) {
   const others = items.filter((i) => !CATS[i.cat].pack);
   const avail = new Set(others);
   const jitter = () => 1 + (rng() - 0.5) * noise;
-  const bases = [...others].sort((p, q) => q.kg * jitter() - p.kg * jitter());
+  const keys = opts.keys;
+  // 遺伝的アルゴリズムから優先度（キー）が渡されたら、その順に土台を選ぶ
+  const bases = keys
+    ? [...others].sort((p, q) => keys.get(q.id) - keys.get(p.id))
+    : [...others].sort((p, q) => q.kg * jitter() - p.kg * jitter());
   const columns = [];
 
   for (const base of bases) {
@@ -151,7 +155,8 @@ function buildColumns(items, maxH, opts, strat, rng, noise) {
     for (;;) {
       // 品目タイプごとに候補を作る（1台、または同じタイプ2台を並べたもの）
       const byType = new Map();
-      for (const it of avail) {
+      const pool = keys ? [...avail].sort((p, q) => keys.get(q.id) - keys.get(p.id)) : avail;
+      for (const it of pool) {
         if (!byType.has(it.type)) byType.set(it.type, []);
         byType.get(it.type).push(it);
       }
@@ -192,8 +197,12 @@ function colDims(col, o) {
   return o ? [col.B, col.A] : [col.A, col.B];
 }
 
-function orderColumns(cols, strat, rng, noise) {
+function orderColumns(cols, strat, rng, noise, keys) {
   const j = () => 1 + (rng() - 0.5) * noise;
+  if (keys) {
+    const k = (c) => keys.get(c.tiers[0].unit.items[0].id);
+    return [...cols].sort((p, q) => k(q) - k(p));
+  }
   if (strat === 'tidy') {
     const rank = (c) => CAT_ORDER.indexOf(c.tiers[0].unit.cat);
     return [...cols].sort((p, q) => rank(p) - rank(q) || q.H * j() - p.H * j());
@@ -270,7 +279,7 @@ function fillStrip(rem, leaderIdx, o, Lleft, W, maxH, opts, strat, rng, noise) {
 }
 
 function wallBuild(cols, L, W, maxH, opts, strat, rng, noise) {
-  let rem = orderColumns(cols, strat, rng, noise);
+  let rem = orderColumns(cols, strat, rng, noise, opts.keys);
   const strips = [];
   let x = 0;
   while (rem.length) {
@@ -515,16 +524,36 @@ export function computeMetrics(plan, container, totalItems) {
   };
 }
 
-function scorePlan(m, L) {
+export function scorePlan(m, L) {
   return m.loaded * 1000 + m.volUtil * 100 - Math.abs(m.cogOffPct) * 1.5 - (m.usedLen / L) * 5;
+}
+
+// 1回分の積付け（段組み → 壁積み → 重心調整 → 重量チェック）
+export function solveOnce(items, container, opts, stratId, rng, noise) {
+  const maxH = container.H - opts.topClear;
+  const usable = items.filter((i) => i.h <= maxH);
+  const cols = buildColumns(usable, maxH, opts, stratId, rng, noise);
+  const { strips, leftovers } = wallBuild(cols, container.L, container.W, maxH, opts, stratId, rng, noise);
+  const plan = finalize(strips, leftovers, container, opts, stratId);
+  // 最大積載重量を超える分は積み残しにする
+  let kg = 0;
+  const keep = [];
+  for (const p of plan.placements) {
+    if (kg + p.item.kg <= container.payloadKg) {
+      kg += p.item.kg;
+      keep.push(p);
+    } else plan.leftovers.push(p.item);
+  }
+  plan.placements = keep;
+  for (const it of items) if (it.h > maxH) plan.leftovers.push(it);
+  const metrics = computeMetrics(plan, container, items.length);
+  return { ...plan, metrics, score: scorePlan(metrics, container.L) };
 }
 
 // ---------- 入口 ----------
 
 export function planLoad(items, container, options = {}) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
-  const maxH = container.H - opts.topClear;
-  const usable = items.filter((i) => i.h <= maxH);
   const plans = [];
   for (const strat of STRATEGIES) {
     let best = null;
@@ -541,23 +570,8 @@ export function planLoad(items, container, options = {}) {
           count: 0.02 + rng() * 0.2,
         },
       };
-      const cols = buildColumns(usable, maxH, runOpts, strat.id, rng, noise);
-      const { strips, leftovers } = wallBuild(cols, container.L, container.W, maxH, runOpts, strat.id, rng, noise);
-      const plan = finalize(strips, leftovers, container, opts, strat.id);
-      // 最大積載重量を超える分は積み残しにする
-      let kg = 0;
-      const keep = [];
-      for (const p of plan.placements) {
-        if (kg + p.item.kg <= container.payloadKg) {
-          kg += p.item.kg;
-          keep.push(p);
-        } else plan.leftovers.push(p.item);
-      }
-      plan.placements = keep;
-      for (const it of items) if (it.h > maxH) plan.leftovers.push(it);
-      const metrics = computeMetrics(plan, container, items.length);
-      const score = scorePlan(metrics, container.L);
-      if (!best || score > best.score) best = { ...plan, metrics, score, strategy: strat, iteration: k };
+      const plan = solveOnce(items, container, runOpts, strat.id, rng, noise);
+      if (!best || plan.score > best.score) best = { ...plan, strategy: strat, iteration: k };
     }
     plans.push(best);
   }
