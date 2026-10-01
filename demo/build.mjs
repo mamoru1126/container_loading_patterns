@@ -1,4 +1,6 @@
-// src/ をひとつの HTML ファイルにまとめる（dist/haikaden-planner.html）
+// src/ をひとつの HTML ファイルにまとめる
+//   計画型:       dist/haikaden-planner.html と ../index.html（GitHub Pages）
+//   リアルタイム型: dist/haikaden-online.html と ../online.html（GitHub Pages）
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -20,30 +22,49 @@ function loadEsbuild() {
 }
 
 const esbuild = loadEsbuild();
-const out = esbuild.buildSync({
-  entryPoints: [join(here, 'src/app.js')],
-  bundle: true,
-  format: 'iife',
-  target: 'es2020',
-  minify: true,
-  legalComments: 'none',
-  write: false,
-  charset: 'utf8',
-});
-const js = out.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
-const page = readFileSync(join(here, 'src/page.html'), 'utf8').replace('/*APP_SCRIPT*/', () => js);
-mkdirSync(join(here, 'dist'), { recursive: true });
-const dest = join(here, 'dist/haikaden-planner.html');
-writeFileSync(dest, page);
-console.log(`built ${dest} (${(page.length / 1024).toFixed(0)} KB)`);
+const style = readFileSync(join(here, 'src/style.css'), 'utf8');
 
-// GitHub Pages 用: リポジトリ直下に完全な HTML 文書として置く
-const full = `<!doctype html>
+const PAGES = [
+  {
+    entry: 'src/app.js',
+    template: 'src/page.html',
+    dist: 'dist/haikaden-planner.html',
+    pages: '../index.html',
+    desc: '廃家電を積み重ねルールと重心を守ってコンテナに積むパターンを自動生成し、3Dで確認できるデモ',
+  },
+  {
+    entry: 'src/online-app.js',
+    template: 'src/online.html',
+    dist: 'dist/haikaden-online.html',
+    pages: '../online.html',
+    desc: 'ランダムに流れてくる廃家電を1台ずつ即座に判断してコンテナに積み、満載になったら次のコンテナへ切り替えるデモ',
+  },
+];
+
+mkdirSync(join(here, 'dist'), { recursive: true });
+for (const pg of PAGES) {
+  const out = esbuild.buildSync({
+    entryPoints: [join(here, pg.entry)],
+    bundle: true,
+    format: 'iife',
+    target: 'es2020',
+    minify: true,
+    legalComments: 'none',
+    write: false,
+    charset: 'utf8',
+  });
+  const js = out.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+  const page = readFileSync(join(here, pg.template), 'utf8')
+    .replace('/*STYLE*/', () => style)
+    .replace('/*APP_SCRIPT*/', () => js);
+  writeFileSync(join(here, pg.dist), page);
+  // GitHub Pages 用: リポジトリ直下に完全な HTML 文書として置く
+  const full = `<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="廃家電を積み重ねルールと重心を守ってコンテナに積むパターンを自動生成し、3Dで確認できるデモ">
+<meta name="description" content="${pg.desc}">
 <style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
 </head>
 <body>
@@ -51,6 +72,6 @@ ${page}
 </body>
 </html>
 `;
-const pagesDest = join(here, '../index.html');
-writeFileSync(pagesDest, full);
-console.log(`built ${pagesDest} (GitHub Pages)`);
+  writeFileSync(join(here, pg.pages), full);
+  console.log(`built ${pg.dist} (${(page.length / 1024).toFixed(0)} KB) と ${pg.pages}`);
+}

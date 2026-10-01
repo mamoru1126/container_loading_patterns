@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="ランダムに流れてくる廃家電を1台ずつ即座に判断してコンテナに積み、満載になったら次のコンテナへ切り替えるデモ">
+<style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>廃家電 リアルタイム積付け</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 配置: 左に積荷の条件、中央に3Dの荷台、右に積付け指示書。狭い画面では縦に積む */
+:root {
+  --paper: #EEF0ED;
+  --panel: #FBFBF9;
+  --ink: #1A2326;
+  --muted: #5A666A;
+  --line: #D3D8D4;
+  --stage: #DEE2DF;
+  --accent: #D9780F;
+  --accent-ink: #FFFFFF;
+  --steel: #3F5B6B;
+  --ok: #2B7A4B;
+  --warn: #A36A12;
+  --ng: #BF2F2F;
+  --ok-bg: #E3F1E8;
+  --warn-bg: #F8ECD6;
+  --ng-bg: #F9E1E1;
+  --band-ok: #BFE0CB;
+  --band-warn: #F1DDB4;
+  --font-ui: "BIZ UDPGothic", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #111517; --panel: #181E21; --ink: #E4E9E7; --muted: #98A4A8; --line: #2A3337;
+    --stage: #0C1012; --accent: #F0973A; --accent-ink: #1A1206; --steel: #86A9BB;
+    --ok: #6CC594; --warn: #E3AF55; --ng: #F07A7A;
+    --ok-bg: #15301F; --warn-bg: #33270F; --ng-bg: #3A1717;
+    --band-ok: #1F4A31; --band-warn: #4A3A17;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #111517; --panel: #181E21; --ink: #E4E9E7; --muted: #98A4A8; --line: #2A3337;
+  --stage: #0C1012; --accent: #F0973A; --accent-ink: #1A1206; --steel: #86A9BB;
+  --ok: #6CC594; --warn: #E3AF55; --ng: #F07A7A;
+  --ok-bg: #15301F; --warn-bg: #33270F; --ng-bg: #3A1717;
+  --band-ok: #1F4A31; --band-warn: #4A3A17;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-ui); font-size: 14px; line-height: 1.6; }
+.app { padding-inline: 16px; padding-block: 16px 32px; max-width: 1680px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.mono, .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand h1 { font-size: 20px; letter-spacing: 0.02em; }
+.mark { width: 22px; height: 16px; border: 2px solid var(--steel); border-radius: 2px; background: repeating-linear-gradient(90deg, transparent 0 3px, var(--steel) 3px 4px); flex: none; }
+.chip { font-size: 11px; letter-spacing: 0.08em; padding: 1px 7px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); }
+.sub { margin: 0; color: var(--muted); font-size: 13px; flex: 1 0 100%; }
+
+.grid { display: grid; grid-template-columns: 300px minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.panel h2 { font-size: 15px; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.panel h3 { font-size: 12px; color: var(--muted); font-weight: 700; letter-spacing: 0.06em; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 12px; color: var(--muted); }
+select { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 7px 8px; }
+.hint { margin: 0; font-size: 12px; color: var(--muted); }
+
+.qty { width: 100%; border-collapse: collapse; }
+.qty td { padding: 3px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.qty tr:last-child td { border-bottom: 0; }
+.qty .nm { font-size: 13px; line-height: 1.3; padding-right: 6px; }
+.qty .nm small { display: block; color: var(--muted); font-size: 11px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
+.step { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.step button { width: 24px; height: 24px; border: 1px solid var(--line); background: transparent; border-radius: 4px; line-height: 1; }
+.step input { width: 34px; text-align: center; border: 0; background: transparent; font-family: var(--font-num); }
+.qty-head { display: flex; justify-content: space-between; align-items: baseline; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.ghost { border: 1px solid var(--line); background: transparent; border-radius: var(--r); padding: 5px 10px; font-size: 12px; }
+.ghost:hover { border-color: var(--muted); }
+.primary { border: 0; background: var(--accent); color: var(--accent-ink); border-radius: var(--r); padding: 11px 14px; font-weight: 700; font-size: 15px; }
+.primary[disabled] { opacity: 0.6; cursor: progress; }
+details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+details .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+
+.stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.plans { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.evo { color: var(--steel); font-weight: 700; }
+.prog { display: block; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 3px; }
+.prog i { display: block; height: 100%; background: var(--steel); transition: width 0.2s; }
+.evobox svg { width: 100%; height: auto; display: block; }
+.evobox .ax { stroke: var(--line); }
+.evobox .ln { fill: none; stroke: var(--steel); stroke-width: 2; }
+.evobox .pt { fill: var(--accent); }
+.evobox .tx { fill: var(--muted); font-size: 10px; font-family: var(--font-num); }
+.evobox p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.plan { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.plan[aria-selected="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.plan .k { font-size: 11px; color: var(--muted); letter-spacing: 0.06em; display: flex; justify-content: space-between; gap: 6px; }
+.plan .t { font-weight: 700; font-size: 14px; }
+.plan .s { font-size: 12px; color: var(--muted); font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.badge { color: var(--accent); font-weight: 700; }
+
+.viewport { position: relative; height: min(66vh, 640px); min-height: 360px; border-radius: var(--r); overflow: hidden; background: var(--stage); border: 1px solid var(--line); }
+#view { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#view:active { cursor: grabbing; }
+.tag3d { position: absolute; transform: translate(-50%, -100%); font-size: 11px; color: var(--muted); background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 1px 6px; border-radius: 3px; pointer-events: none; white-space: nowrap; }
+.tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; font-size: 12px; line-height: 1.5; box-shadow: 0 6px 18px rgb(0 0 0 / 0.14); max-width: 260px; }
+.tip b { font-size: 13px; }
+.tip .mono { color: var(--muted); }
+.tools { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; pointer-events: none; }
+.tools > * { pointer-events: auto; }
+.seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 5px 9px; font-size: 12px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.play { display: inline-flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 3px 10px 3px 4px; flex: 1 1 260px; min-width: 0; }
+.play button { border: 0; background: var(--accent); color: var(--accent-ink); border-radius: 4px; padding: 4px 10px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.play input[type=range] { flex: 1; min-width: 60px; accent-color: var(--accent); }
+.play .mono { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.legend { position: absolute; top: 8px; left: 8px; display: flex; flex-wrap: wrap; gap: 4px 10px; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: var(--r); padding: 5px 8px; font-size: 11px; max-width: calc(100% - 16px); }
+.under { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; align-items: baseline; }
+.hint3d { font-size: 11.5px; color: var(--muted); }
+.caption { margin: 0; font-size: 13px; min-height: 1.6em; flex: 1 1 360px; min-width: 0; }
+.caption .n { font-family: var(--font-num); color: var(--accent); font-weight: 500; margin-right: 6px; }
+
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.tile { background: var(--panel); padding: 8px 9px; min-width: 0; }
+.tile .l { font-size: 11px; color: var(--muted); }
+.tile .v { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 500; line-height: 1.25; white-space: nowrap; }
+.tile .v small { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 2px; }
+
+.gauge { display: flex; flex-direction: column; gap: 4px; }
+.track { position: relative; height: 26px; border: 1px solid var(--line); border-radius: 3px; background: var(--panel); overflow: hidden; }
+.band { position: absolute; top: 0; bottom: 0; }
+.center { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--muted); }
+.marker { position: absolute; top: 2px; bottom: 2px; width: 4px; margin-left: -2px; background: var(--accent); border-radius: 2px; transition: left 0.3s; }
+.ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+
+.checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.checks li { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 12.5px; align-items: start; }
+.pill { font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 3px; min-width: 34px; text-align: center; margin-top: 2px; }
+.pill.ok { color: var(--ok); background: var(--ok-bg); }
+.pill.warn { color: var(--warn); background: var(--warn-bg); }
+.pill.ng { color: var(--ng); background: var(--ng-bg); }
+.checks .note { grid-column: 2; color: var(--muted); font-size: 11.5px; font-family: var(--font-num); }
+
+.left { font-size: 12.5px; background: var(--warn-bg); border-radius: var(--r); padding: 8px 10px; }
+.left b { color: var(--warn); }
+
+.steps { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow: auto; border-top: 1px solid var(--line); }
+.steps li { display: grid; grid-template-columns: 30px 1fr; gap: 0 6px; padding: 5px 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; cursor: pointer; line-height: 1.4; }
+.steps li:hover, .steps li.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.steps li.done .n { color: var(--muted); }
+.steps .n { font-family: var(--font-num); color: var(--accent); text-align: right; }
+.steps .w { color: var(--muted); grid-column: 2; font-size: 11.5px; }
+
+.sources { font-size: 12px; color: var(--muted); }
+.sources summary { cursor: pointer; }
+.sources ul { margin: 6px 0 0; padding-left: 18px; columns: 2 260px; }
+.sources a { color: inherit; }
+
+@media (max-width: 1280px) {
+  .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid { grid-template-columns: 290px minmax(0, 1fr); }
+  .sheet { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .sheet > h2 { grid-column: 1 / -1; }
+}
+@media (max-width: 820px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .stage { order: -1; }
+  .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .viewport { height: 58vh; min-height: 320px; }
+  .hint3d { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .marker { transition: none; } }
+
+/* デモの切り替え */
+.modes { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--panel); margin-left: auto; }
+.modes a { padding: 5px 12px; font-size: 13px; color: var(--muted); text-decoration: none; display: flex; flex-direction: column; line-height: 1.3; }
+.modes a small { font-size: 10.5px; }
+.modes a[aria-current="page"] { background: var(--ink); color: var(--panel); font-weight: 700; }
+.modes a:not([aria-current="page"]):hover { color: var(--ink); }
+
+/* リアルタイム型の画面: 左に流し方の条件、中央にコンベヤとコンテナ、右にコンテナごとの記録 */
+.ctrl-row { display: flex; gap: 8px; }
+.ctrl-row > * { flex: 1; }
+.ghost.wide { padding: 9px 10px; font-size: 13px; }
+.queue { position: absolute; top: 8px; left: 8px; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; font-size: 12px; max-width: min(260px, calc(100% - 16px)); }
+.queue h4 { margin: 0 0 4px; font-size: 11px; color: var(--muted); font-weight: 700; letter-spacing: 0.05em; }
+.queue ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.queue li { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queue li .q { font-family: var(--font-num); color: var(--muted); font-size: 10.5px; min-width: 30px; }
+.queue li.pool { font-weight: 700; }
+.queue li.pool .q { color: var(--accent); }
+.banner { position: absolute; top: 8px; right: 8px; background: var(--ink); color: var(--panel); border-radius: var(--r); padding: 6px 10px; font-size: 12.5px; font-weight: 700; }
+.now { display: flex; align-items: baseline; gap: 6px; }
+.meter { height: 10px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--steel); transition: width 0.15s; }
+.cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 330px; overflow: auto; }
+.card { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center; cursor: pointer; background: var(--panel); text-align: left; width: 100%; }
+.card[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.card .no { font-family: var(--font-num); font-weight: 500; font-size: 15px; }
+.card .meta { font-size: 11.5px; color: var(--muted); font-family: var(--font-num); }
+.card .bar2 { grid-column: 1 / -1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.card .bar2 i { display: block; height: 100%; background: var(--steel); }
+.card.live .bar2 i { background: var(--accent); }
+.cmp { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cmp th, .cmp td { white-space: nowrap; padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.cmp th:first-child, .cmp td:first-child { text-align: left; }
+.cmp th { font-size: 11px; color: var(--muted); font-weight: 700; }
+.cmp tr.win td { font-weight: 700; }
+.mini { font-size: 12px; color: var(--muted); margin: 0; }
+.weights { width: 100%; border-collapse: collapse; font-size: 12px; }
+.weights td { padding: 3px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.weights td:last-child { text-align: right; font-family: var(--font-num); white-space: nowrap; }
+</style>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>廃家電 リアルタイム積付け</h1><span class="chip">デモ</span></div>
+    <nav class="modes" aria-label="デモの切り替え">
+      <a href="https://mamoru1126.github.io/container_loading_patterns/">計画型<small>台数が決まっている</small></a>
+      <a href="https://mamoru1126.github.io/container_loading_patterns/online.html" aria-current="page">リアルタイム型<small>順に流れてくる</small></a>
+    </nav>
+    <p class="sub">コンベヤでランダムに流れてくる廃家電を、1台ずつその場で置き場所を判断して積み込みます。コンテナに入らなくなったら締めて、次の空コンテナに切り替えます。先に何が来るかは使わずに判断します。</p>
+  </header>
+
+  <main class="grid">
+    <section class="panel" aria-label="流し方の条件">
+      <h2>流し方の条件</h2>
+      <div class="field">
+        <label for="container">コンテナ</label>
+        <select id="container"></select>
+      </div>
+      <div class="field">
+        <label for="policy">置き場所の判断</label>
+        <select id="policy">
+          <option value="learned">学習済みの判断（遺伝的アルゴリズム）</option>
+          <option value="dblf">単純な奥詰め（比較用）</option>
+        </select>
+        <p class="hint" id="policyNote"></p>
+      </div>
+      <div class="field">
+        <label for="buffer">待機場所（流れてきた家電を一時的に置いておける台数）</label>
+        <select id="buffer">
+          <option value="0" selected>なし（来た順に必ず積む）</option>
+          <option value="1">1台</option>
+          <option value="3">3台</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="total">流す台数</label>
+        <select id="total">
+          <option value="120">120台</option>
+          <option value="300" selected>300台</option>
+          <option value="1000">1,000台</option>
+          <option value="0">止めるまで</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>速さ</label>
+        <div class="seg" role="group" aria-label="速さ" id="speed">
+          <button type="button" data-speed="1" aria-pressed="false">1倍</button>
+          <button type="button" data-speed="3" aria-pressed="true">3倍</button>
+          <button type="button" data-speed="10" aria-pressed="false">10倍</button>
+          <button type="button" data-speed="0" aria-pressed="false">最速</button>
+        </div>
+      </div>
+      <button class="primary" id="startBtn" type="button">流し始める</button>
+      <div class="ctrl-row">
+        <button class="ghost wide" id="stepBtn" type="button">1台だけ進める</button>
+        <button class="ghost wide" id="resetBtn" type="button">最初から（別の流れ）</button>
+      </div>
+      <p class="hint">品目の比率は計画型の標準構成と同じです。寸法は実製品の公称値に±4%程度のばらつきを加えています。</p>
+    </section>
+
+    <section class="stage" aria-label="積込みの様子">
+      <div class="viewport" id="viewport">
+        <canvas id="view" aria-label="コンベヤとコンテナの3D表示"></canvas>
+        <div id="tags"></div>
+        <div class="queue" id="queueBox"><h4>次に流れてくる家電</h4><ol id="queue"></ol></div>
+        <div class="banner" id="banner" hidden></div>
+        <div class="tip" id="tip" hidden></div>
+        <div class="tools">
+          <div class="seg" role="group" aria-label="視点">
+            <button type="button" data-view="iso" aria-pressed="true">斜め</button>
+            <button type="button" data-view="door" aria-pressed="false">扉側</button>
+            <button type="button" data-view="top" aria-pressed="false">真上</button>
+          </div>
+          <div class="seg" role="group" aria-label="色">
+            <button type="button" data-color="real" aria-pressed="true">実物</button>
+            <button type="button" data-color="cat" aria-pressed="false">品目別</button>
+          </div>
+          <button class="ghost" id="backLive" type="button" hidden style="background:var(--panel)">積込中のコンテナに戻る</button>
+        </div>
+      </div>
+      <div class="under">
+        <p class="caption" id="caption"></p>
+        <span class="hint3d">ドラッグで回転 ・ 右ドラッグかShiftで移動 ・ ホイールかピンチで拡大</span>
+      </div>
+    </section>
+
+    <section class="panel sheet" aria-label="積込みの記録">
+      <h2>積込みの記録</h2>
+      <div class="tiles" id="tiles"></div>
+      <div>
+        <h3 style="margin-bottom:6px" id="nowTitle">積込中のコンテナ</h3>
+        <div class="meter"><i id="nowMeter" style="width:0%"></i></div>
+        <p class="mini" id="nowText"></p>
+      </div>
+      <div>
+        <h3 style="margin-bottom:6px">コンテナごとの結果</h3>
+        <ul class="cards" id="cards"></ul>
+      </div>
+      <div>
+        <h3 style="margin-bottom:6px">判断方法の比べ方</h3>
+        <p class="mini" style="margin-bottom:6px">今と同じ家電の流れを、判断方法と待機場所（待機できる台数）を変えて一気に積んだ結果です。本数は最後の積込中のコンテナを含み、容積率と台/本は満載で締めたコンテナの平均です。</p>
+        <table class="cmp" id="cmp"></table>
+        <button class="ghost" id="cmpBtn" type="button" style="margin-top:6px">同じ流れで比べる</button>
+      </div>
+      <details>
+        <summary>学習した判断の中身</summary>
+        <p class="mini" style="margin:6px 0">置ける場所の候補ごとに下の項目を計算し、重みを掛けて足した点数がいちばん小さい場所を選びます。重みは遺伝的アルゴリズムで、学習用の家電の流れを積んだときの平均容積率が最大になるように決めました。</p>
+        <table class="weights" id="weights"></table>
+        <p class="mini" id="trainInfo" style="margin-top:6px"></p>
+      </details>
+    </section>
+  </main>
+</div>
+<script>
+(()=>{var R={jr12:{id:"jr12",name:"JR 12ft（19D形）",short:"12ft",L:3642,W:2270,H:2252,payloadKg:5e3,door:"side",frame:"#8E3B2E",note:"国内の鉄道輸送で一般的な5tコンテナ。両側面に扉がある。",src:"https://www.weblio.jp/content/19d"},iso20:{id:"iso20",name:"ISO 20ft ドライ",short:"20ft",L:5900,W:2350,H:2390,payloadKg:28200,door:"end",frame:"#3F5B6B",note:"海上・陸上で最も一般的なサイズ。妻側（片側の端）に扉がある。",src:"https://gofreight.com/blog/education/shipping-container-dimensions-everything-you-need-to-know.html"},iso40:{id:"iso40",name:"ISO 40ft ドライ",short:"40ft",L:12030,W:2350,H:2390,payloadKg:28800,door:"end",frame:"#3F5B6B",note:"20ftの約2倍の長さ。",src:"https://gofreight.com/blog/education/shipping-container-dimensions-everything-you-need-to-know.html"},iso40hc:{id:"iso40hc",name:"ISO 40ft ハイキューブ",short:"40ft HC",L:12030,W:2350,H:2700,payloadKg:28560,door:"end",frame:"#3F5B6B",note:"40ftより天井が約30cm高い。",src:"https://gofreight.com/blog/education/shipping-container-dimensions-everything-you-need-to-know.html"}},I={fridge:{name:"冷蔵庫",carries:["acin"],topLoadKg:20,maxSame:1,tint:"#3E7CB1",rule:"正立のみ。上に載せてよいのはエアコン室内機だけ"},freezer:{name:"冷凍庫",carries:["acin","acout","dryer"],topLoadKg:30,maxSame:1,tint:"#6FA8CF",rule:"正立のみ。上は30kgまで"},washer:{name:"縦型洗濯機",carries:["washer","dryer","acout","crt","acin"],topLoadKg:50,maxSame:2,tint:"#2E9E83",rule:"2段まで積み重ね可。上は50kgまで"},drum:{name:"ドラム式洗濯機",carries:["washer","drum","dryer","acout","crt","acin"],topLoadKg:90,maxSame:2,tint:"#1F6B5A",rule:"頑丈なので土台向き。上は90kgまで"},dryer:{name:"衣類乾燥機",carries:["dryer","acout","acin"],topLoadKg:30,maxSame:2,tint:"#7DB89B",rule:"上は30kgまで"},lcd:{name:"液晶テレビ",carries:[],topLoadKg:0,maxSame:1,tint:"#7A5BA6",rule:"スタンドを付けたまま立てて並べる。上には何も載せない",pack:!0},crt:{name:"ブラウン管テレビ",carries:["crt","acin"],topLoadKg:45,maxSame:2,tint:"#A3578F",rule:"同じか小さいブラウン管なら2段まで"},acin:{name:"エアコン室内機",carries:["acin"],topLoadKg:40,maxSame:4,tint:"#D9922B",rule:"背面を下にして寝かせる。2台並べて載せられる。4段まで",group:!0},acout:{name:"エアコン室外機",carries:["acout","acin"],topLoadKg:60,maxSame:3,tint:"#B8642A",rule:"正立のみ（圧縮機があるため）。3段まで",group:!0}},Ct=[{id:"fridge_s",cat:"fridge",label:"冷蔵庫 2ドア 180L",ref:"Panasonic NR-B18C3",w:497,d:595,h:1350,kg:41,src:"https://panasonic.jp/reizo/products/NR-B18C3/spec.html"},{id:"fridge_m",cat:"fridge",label:"冷蔵庫 3ドア 350L",ref:"Sharp SJ-W358K",w:600,d:665,h:1690,kg:68,src:"https://jp.sharp/reizo/products/sjw358k/spec/"},{id:"fridge_l",cat:"fridge",label:"冷蔵庫 6ドア 500L",ref:"Sharp SJ-X500M",w:685,d:699,h:1833,kg:88,src:"https://jp.sharp/reizo/products/sjx500m/spec"},{id:"freezer",cat:"freezer",label:"上開き冷凍庫 100L",ref:"Haier JF-NC100A",w:545,d:490,h:870,kg:25.5,src:"https://www.haier.com/jp/freezers/jf-nc100a.shtml"},{id:"washer",cat:"washer",label:"縦型洗濯機 8kg",ref:"Panasonic NA-FA8H1",w:599,d:618,h:1024,kg:42,src:"https://rank-king.jp/product/689468"},{id:"drum",cat:"drum",label:"ドラム式洗濯乾燥機 11kg",ref:"Hitachi BD-SX110GL",w:630,d:716,h:1065,kg:81,src:"https://rank-king.jp/product/449038/specs"},{id:"dryer",cat:"dryer",label:"衣類乾燥機 6kg",ref:"Hitachi DE-N60WV",w:630,d:516,h:670,kg:26,src:"https://kadenfan.hitachi.co.jp/wash/lineup/den60wv/"},{id:"lcd32",cat:"lcd",label:"液晶テレビ 32型",ref:"32型の一般的な寸法（概算）",w:715,d:175,h:470,kg:5.5,src:""},{id:"lcd43",cat:"lcd",label:"液晶テレビ 43型",ref:"Sharp 4T-C43FN2",w:957,d:238,h:621,kg:14.5,src:"https://rank-king.jp/product/722153/specs"},{id:"lcd55",cat:"lcd",label:"液晶テレビ 55型",ref:"Sharp 4T-C55FN1",w:1228,d:281,h:775,kg:23,src:"https://rank-king.jp/product/721824/specs"},{id:"crt21",cat:"crt",label:"ブラウン管テレビ 21型",ref:"Panasonic TH-21FA8",w:648,d:485,h:473,kg:24,src:"https://panasonic.jp/viera/products/TH-21FA8/spec.html"},{id:"crt29",cat:"crt",label:"ブラウン管テレビ 29型",ref:"Panasonic TH-29FB8",w:786,d:512,h:578,kg:43,src:"https://panasonic.jp/viera/products/TH-29FB8/spec.html"},{id:"acin_s",cat:"acin",label:"エアコン室内機 2.2kW",ref:"Panasonic CS-222DJR",w:780,d:285,h:239,kg:8,src:"https://panasonic.jp/aircon/products/CS-222DJR/spec.html"},{id:"acin_l",cat:"acin",label:"エアコン室内機 4.0kW",ref:"Panasonic CS-402DX2",w:799,d:295,h:385,kg:15.5,src:"https://ac.fj-tec.co.jp/24897/"},{id:"acout_s",cat:"acout",label:"エアコン室外機 2.2kW",ref:"Panasonic CS-222DJR",w:675,d:285,h:555,kg:18,src:"https://panasonic.jp/aircon/products/CS-222DJR/spec.html"},{id:"acout_l",cat:"acout",label:"エアコン室外機 4.0kW",ref:"Panasonic CS-402DX2",w:849,d:319,h:699,kg:46,src:"https://ac.fj-tec.co.jp/24897/"}],De=Object.fromEntries(Ct.map(n=>[n.id,n])),At={fridge:[["#F1F1ED",5],["#C7CBCE",2],["#D9CCB4",2],["#E7E3DA",2],["#3B3431",1]],fridge_l:[["#F1F1ED",2],["#C7CBCE",1],["#D9CCB4",2],["#3B3431",2],["#5A4A3F",1]],freezer:[["#F3F3F0",3],["#E8E8E3",1]],washer:[["#F3F4F2",4],["#E8ECEE",2],["#EFEDE6",1]],drum:[["#EEECE6",3],["#D4C7AF",2],["#A2A7AC",1],["#5C5853",1]],dryer:[["#F2F3F1",3],["#E6E7E2",1]],lcd:[["#1D1E21",1]],crt:[["#BBBEC2",3],["#2A2B2E",3],["#62666B",2]],acin:[["#F5F5F2",4],["#EEEEE9",1]],acout:[["#E4DECD",3],["#EAE6D9",2],["#D8D3C3",1]]},Zt={fridge_s:4,fridge_m:5,fridge_l:3,freezer:1,washer:8,drum:3,dryer:2,lcd32:5,lcd43:3,lcd55:2,crt21:3,crt29:2,acin_s:7,acin_l:2,acout_s:7,acout_l:2};function te(n){let s=n>>>0;return function(){s=s+1831565813>>>0;let t=s;return t=Math.imul(t^t>>>15,t|1),t^=t+Math.imul(t^t>>>7,t|61),((t^t>>>14)>>>0)/4294967296}}function $t(n,s){let e=n.reduce((o,[,i])=>o+i,0),t=s()*e;for(let[o,i]of n)if(t-=i,t<=0)return o;return n[n.length-1][0]}var ft=n=>Math.round(n/5)*5;function ee(n,s,e,t){let o=1+(s()-.5)*.08,i=1+(s()-.5)*.08,c=1+(s()-.5)*.06,a=n.cat==="lcd"||n.cat==="acin"?.4:1,r=ft(n.w*(1+(o-1)*a)),u=ft(n.d*(1+(i-1)*a)),d=ft(n.h*(1+(c-1)*a)),p=r*u*d/(n.w*n.d*n.h),b=Math.round(n.kg*p*(1+(s()-.5)*.08)*2)/2,l=At[n.id]||At[n.cat];return{id:e,serial:t,type:n.id,cat:n.cat,label:n.label,ref:n.ref,w:r,d:u,h:d,kg:b,color:$t(l,s),wear:.93+s()*.07,variant:s()}}function pt(n=1,s=Zt){let e=te(n*104729+7),t=Ct.filter(i=>(s[i.id]||0)>0).map(i=>[i,s[i.id]]),o=0;return function(){let c=$t(t,e);return o+=1,ee(c,e,`#${String(o).padStart(3,"0")}`,o)}}var at={back:10,height:.1636,side:.1104,contact:1,floor:1.4306,headroom:.6027,mix:.1533,flat:.103,dead:.9377},tt={generations:30,population:24,trainFill:46,history:[43.91,43.91,44.71,44.95,45.03,45.3,45.4,45.53,45.72,45.72,45.72,45.72,45.72,45.72,45.72,45.72,45.72,45.74,45.74,45.74,45.74,45.74,45.74,45.74,45.74,45.74,45.74,45.74,45.74,45.74,46.03],test:{learned:{fill:47.1,count:62.4},manual:{fill:46,count:61.3},dblf:{fill:46,count:61.4}},seconds:340};var Bt={learned:{id:"learned",name:"学習済みの判断（GA）",desc:"置き場所の評価の重みを、遺伝的アルゴリズムで事前に学習した判断"},dblf:{id:"dblf",name:"単純な奥詰め",desc:"奥 → 下 → 左の順に、最初に置ける場所へ置く従来の方法（比較用）"}},xt=[["back","扉側への出っ張り（奥から詰める）"],["height","置く高さ（低い所から）"],["side","左右の位置（左から）"],["contact","壁や隣の品目と接していない面の割合"],["floor","床に直接置く（積み重ねずに床面を使う）"],["headroom","上に残るすき間が中途半端な量（使えない空間）"],["mix","下や隣が別の品目（同じ品目でまとめる）"],["flat","隣の品目と上面の高さがそろっていない（後で載せやすい平らな面を作る）"],["dead","上面に後から何も載せられない（載せられる品目がない、または天井まで余裕がない）"]],z=.5;function Pt(n,s){return{index:s,container:n,placed:[],kg:0,vol:0,closed:!1}}function H(n,s,e,t){return Math.min(s,t)-Math.max(n,e)}var mt=class{constructor(s,e={}){this.ct=s,this.gap=e.gap??20,this.topClear=e.topClear??50,this.minSupport=e.minSupport??.8,this.policy=e.policy??"learned",this.weights=e.weights??at,this.maxH=s.H-this.topClear}candidates(s,e){let t=this.gap,o=[[0,0,0]],i=[];for(let a of s.placed)o.push([a.x+a.ex+t,a.y,a.z],[a.x,a.y+a.ey+t,a.z],[a.x+a.ex+t,a.y,0],[a.x,a.y+a.ey+t,0],[a.x+a.ex+t,0,0],[a.x,a.y,a.z+a.h]);let c=new Set;for(let a of[0,1]){let r=a?e.d:e.w,u=a?e.w:e.d,d=(p,b,l)=>{let m=`${a}|${Math.round(p)}|${Math.round(b)}|${Math.round(l)}`;c.has(m)||(c.add(m),i.push({x:p,y:b,z:l,rot:a,ex:r,ey:u}))};for(let[p,b,l]of o)d(p,b,l),l===0&&d(p,this.ct.W-u,0);for(let p of s.placed)d(p.x+(p.ex-r)/2,p.y+(p.ey-u)/2,p.z+p.h)}return i}feasible(s,e,t){let{L:o,W:i}=this.ct,c=this.gap;if(t.x<-z||t.y<-z||t.x+t.ex>o+z||t.y+t.ey>i+z||t.z+e.h>this.maxH+z||s.kg+e.kg>this.ct.payloadKg)return null;for(let l of s.placed){if(Math.abs(l.z-(t.z+e.h))<=z&&H(t.x,t.x+t.ex,l.x,l.x+l.ex)>0&&H(t.y,t.y+t.ey,l.y,l.y+l.ey)>0)return null;if(H(t.z,t.z+e.h,l.z,l.z+l.h)<=z)continue;let g=H(t.x,t.x+t.ex,l.x,l.x+l.ex),v=H(t.y,t.y+t.ey,l.y,l.y+l.ey);if(g>-c+z&&v>-c+z)return null}if(t.z<=z)return{supports:[],sameDepth:1};let a=I[e.cat],r=[],u=0,d=1;for(let l of s.placed){if(Math.abs(l.z+l.h-t.z)>z)continue;let m=H(t.x,t.x+t.ex,l.x,l.x+l.ex),g=H(t.y,t.y+t.ey,l.y,l.y+l.ey);if(m<=0||g<=0)continue;if(!I[l.item.cat].carries.includes(e.cat)||e.cat!=="acin"&&e.kg>l.item.kg*1.15||e.cat==="crt"&&l.item.cat==="crt"&&e.w>l.item.w+10)return null;l.item.cat===e.cat&&(d=Math.max(d,l.sameDepth+1)),r.push({p:l,a:m*g}),u+=m*g}if(u<this.minSupport*t.ex*t.ey||d>a.maxSame)return null;let p=new Map,b=(l,m)=>{let g=l.reduce((v,y)=>v+y.a,0);for(let{p:v,a:y}of l){let E=m*y/g;p.set(v,(p.get(v)||0)+E),v.supports.length&&b(v.supports,E)}};b(r,e.kg);for(let[l,m]of p)if(l.load+m>I[l.item.cat].topLoadKg+1e-6)return null;return{supports:r,sameDepth:d,add:p}}features(s,e,t,o){let{L:i,W:c}=this.ct,a=this.maxH,r=this.gap+5,u=0,d=[[t.x<=r,"x0"],[t.x+t.ex>=i-r,"x1"],[t.y<=r,"y0"],[t.y+t.ey>=c-r,"y1"]],p={x0:d[0][0],x1:d[1][0],y0:d[2][0],y1:d[3][0]},b=0,l=0;for(let f of s.placed){if(H(t.z,t.z+e.h,f.z,f.z+f.h)<=0)continue;let M=H(t.x,t.x+t.ex,f.x,f.x+f.ex),S=H(t.y,t.y+t.ey,f.y,f.y+f.ey);S>0&&Math.abs(f.x+f.ex-t.x)<=r&&(p.x0=!0),S>0&&Math.abs(t.x+t.ex-f.x)<=r&&(p.x1=!0),M>0&&Math.abs(f.y+f.ey-t.y)<=r&&(p.y0=!0),M>0&&Math.abs(t.y+t.ey-f.y)<=r&&(p.y1=!0),(S>0&&(Math.abs(f.x+f.ex-t.x)<=r||Math.abs(t.x+t.ex-f.x)<=r)||M>0&&(Math.abs(f.y+f.ey-t.y)<=r||Math.abs(t.y+t.ey-f.y)<=r))&&(l+=1,f.item.cat!==e.cat&&(b+=1))}let m=t.z+e.h,g=1;for(let f of s.placed)!(H(t.x-r,t.x+t.ex+r,f.x,f.x+f.ex)>0&&H(t.y-r,t.y+t.ey+r,f.y,f.y+f.ey)>0)||f.z+f.h<=t.z||(g=Math.min(g,Math.abs(f.z+f.h-m)/500));let y=!(I[e.cat].carries.length>0)||a-m<239?1:0;for(let f of o.supports)l+=1,f.p.item.cat!==e.cat&&(b+=1);u=["x0","x1","y0","y1"].filter(f=>p[f]).length;let E=a-(t.z+e.h),x=E<239?E/239:0;return{back:(t.x+t.ex)/i,height:t.z/a,side:t.y/c,contact:1-u/4,floor:t.z<=z?1:0,headroom:x,mix:l?b/l:0,flat:Math.min(1,g),dead:y}}score(s,e,t,o){if(this.policy==="dblf")return t.x*1e6+t.z*1e3+t.y;let i=this.features(s,e,t,o),c=0;for(let[a]of xt)c+=this.weights[a]*i[a];return c}decide(s,e){let t=null;for(let o of this.candidates(s,e)){let i=this.feasible(s,e,o);if(!i)continue;let c=this.score(s,e,o,i);(!t||c<t.s)&&(t={c:o,f:i,s:c})}return t}place(s,e,t){let{c:o,f:i}=t;if(i.add)for(let[a,r]of i.add)a.load+=r;let c={item:e,x:o.x,y:o.y,z:o.z,ex:o.ex,ey:o.ey,h:e.h,rot:o.rot,supports:i.supports,sameDepth:i.sameDepth,load:0,order:s.placed.length+1,tier:i.supports.length?Math.max(...i.supports.map(a=>a.p.tier))+1:0};return s.placed.push(c),s.kg+=e.kg,s.vol+=e.w*e.d*e.h,c}},et=class{constructor(s,e,t={}){this.ct=s,this.next=e,this.packer=new mt(s,t),this.bufferSize=t.buffer??0,this.bins=[Pt(s,1)],this.queue=[],this.lookahead=t.lookahead??6,this.processed=0,this.decideMs=0,this.log=[],this.fill()}get bin(){return this.bins[this.bins.length-1]}fill(){for(;this.queue.length<this.lookahead+this.bufferSize+1;)this.queue.push(this.next())}step(){this.fill();let s=performance.now(),e=this.queue.slice(0,this.bufferSize+1),t=null;for(let u=0;u<e.length;u++){let d=this.packer.decide(this.bin,e[u]);if(d&&(!t||d.s<t.d.s)&&(t={i:u,d}),this.packer.policy==="dblf"&&t)break}let o=null;if(!t){o=this.bin,o.closed=!0,this.bins.push(Pt(this.ct,this.bins.length+1));let u=this.packer.decide(this.bin,e[0]);if(!u)throw new Error(`${e[0].label} が空のコンテナにも入りません`);t={i:0,d:u}}let i=this.queue.splice(t.i,1)[0],c=this.packer.place(this.bin,i,t.d),a=performance.now()-s;this.decideMs+=a,this.processed+=1,this.fill();let r={item:i,placement:c,bin:this.bin,closed:o,ms:a,fromBuffer:t.i>0};return this.log.push(r),r}stats(){let{L:s,W:e,H:t}=this.ct,o=s*e*t,i=this.bins.filter(a=>a.closed),c=i.map(a=>a.vol/o);return{processed:this.processed,containers:this.bins.length,closed:i.length,avgFill:c.length?c.reduce((a,r)=>a+r,0)/c.length:null,avgCount:i.length?i.reduce((a,r)=>a+r.placed.length,0)/i.length:null,avgMs:this.processed?this.decideMs/this.processed:0,current:this.bin}}};function nt(n){let{L:s,W:e,H:t}=n.container,o=n.placed,i=n.kg,c=i?o.reduce((r,u)=>r+u.item.kg*(u.x+u.ex/2),0)/i:s/2,a=o.length?Math.max(...o.map(r=>r.x+r.ex)):0;return{count:o.length,kg:i,volUtil:n.vol/(s*e*t),usedLen:a,cogOffPct:(c-s/2)/s*100,maxTier:o.length?Math.max(...o.map(r=>r.tier+1)):0}}var W=1;function ot(n,s,e,t){return Math.max(0,Math.min(s,t)-Math.max(n,e))}function Dt(n,s,e){let{L:t,W:o,H:i,payloadKg:c}=s,a=n.placements,r={bounds:[],overlap:[],support:[],rule:[],load:[],upright:[],ceiling:[]};for(let x of a){(x.x<-W||x.y<-W||x.z<-W||x.x+x.ex>t+W||x.y+x.ey>o+W)&&r.bounds.push(x.item.id),x.z+x.h>i-e.topClear+W&&r.ceiling.push(x.item.id);let f=[x.ex,x.ey].sort((M,S)=>M-S).join(","),F=[x.item.w,x.item.d].sort((M,S)=>M-S).join(",");(x.h!==x.item.h||f!==F)&&r.upright.push(x.item.id)}for(let x=0;x<a.length;x++){let f=a[x];for(let F=x+1;F<a.length;F++){let M=a[F],S=ot(f.x,f.x+f.ex,M.x,M.x+M.ex),A=ot(f.y,f.y+f.ey,M.y,M.y+M.ey),C=ot(f.z,f.z+f.h,M.z,M.z+M.h);S>W&&A>W&&C>W&&r.overlap.push(`${f.item.id} × ${M.item.id}`)}}let u=new Map;for(let x of a){if(x.z<=W)continue;let f=[],F=0;for(let S of a){if(S===x||Math.abs(S.z+S.h-x.z)>W)continue;let A=ot(x.x,x.x+x.ex,S.x,S.x+S.ex),C=ot(x.y,x.y+x.ey,S.y,S.y+S.ey);A>0&&C>0&&(f.push({q:S,a:A*C}),F+=A*C)}u.set(x,f);let M=F/(x.ex*x.ey);M<e.minSupport-.02&&r.support.push(`${x.item.id}（${Math.round(M*100)}%）`);for(let{q:S}of f)I[S.item.cat].carries.includes(x.item.cat)||r.rule.push(`${x.item.label} を ${S.item.label} の上`)}let d=new Map(a.map(x=>[x,0])),p=[...a].sort((x,f)=>f.z-x.z);for(let x of p){let f=u.get(x);if(!f||!f.length)continue;let F=f.reduce((S,A)=>S+A.a,0),M=x.item.kg+d.get(x);for(let{q:S,a:A}of f)d.set(S,d.get(S)+M*A/F)}let b=0;for(let x of a){let f=I[x.item.cat].topLoadKg,F=d.get(x);F>0&&(b=Math.max(b,f?F/f:1/0)),F>f+.5&&r.load.push(`${x.item.label}（${F.toFixed(0)}kg / 上限${f}kg）`)}let l=a.reduce((x,f)=>x+f.item.kg,0),m=l?a.reduce((x,f)=>x+f.item.kg*(f.x+f.ex/2),0)/l:t/2,g=Math.abs(m-t/2)/t,v=a.filter(x=>x.x+x.ex/2<t/2).reduce((x,f)=>x+f.item.kg,0),y=l?Math.max(v,l-v)/l:.5,E=g<=.05?"ok":g<=.1||y<=.6?"warn":"ng";return[{id:"upright",label:"正立（冷蔵庫・室外機などを横倒しにしない）",state:r.upright.length?"ng":"ok",detail:r.upright},{id:"rule",label:"積み重ねてよい品目の組み合わせ",state:r.rule.length?"ng":"ok",detail:r.rule},{id:"load",label:"下の品目の耐荷重",state:r.load.length?"ng":"ok",detail:r.load,note:b?`最も厳しい箇所で上限の${Math.round(b*100)}%`:"積み重ねなし"},{id:"support",label:`支持面積 ${Math.round(e.minSupport*100)}%以上`,state:r.support.length?"ng":"ok",detail:r.support},{id:"overlap",label:"品目どうしの干渉なし",state:r.overlap.length||r.bounds.length?"ng":"ok",detail:[...r.overlap,...r.bounds]},{id:"ceiling",label:`天井とのすき間 ${e.topClear}mm以上`,state:r.ceiling.length?"ng":"ok",detail:r.ceiling},{id:"payload",label:"最大積載重量",state:l<=c?"ok":"ng",detail:[],note:`${Math.round(l).toLocaleString()} / ${c.toLocaleString()} kg`},{id:"cog",label:"前後の重心（中央±5%）",state:E,detail:[],note:Math.abs(m-t/2)<5?"ほぼ中央（0.0%）":`中央から${m>t/2?"扉側":"奥側"}へ ${(Math.abs(m-t/2)/1e3).toFixed(2)} m（${(g*100).toFixed(1)}%）`}]}var N={ident(){let n=new Float32Array(16);return n[0]=n[5]=n[10]=n[15]=1,n},mul(n,s){let e=new Float32Array(16);for(let t=0;t<4;t++)for(let o=0;o<4;o++){let i=0;for(let c=0;c<4;c++)i+=n[c*4+o]*s[t*4+c];e[t*4+o]=i}return e},perspective(n,s,e,t){let o=1/Math.tan(n/2),i=new Float32Array(16);return i[0]=o/s,i[5]=o,i[10]=(t+e)/(e-t),i[11]=-1,i[14]=2*t*e/(e-t),i},ortho(n,s,e,t,o,i){let c=new Float32Array(16);return c[0]=2/(s-n),c[5]=2/(t-e),c[10]=-2/(i-o),c[12]=-(s+n)/(s-n),c[13]=-(t+e)/(t-e),c[14]=-(i+o)/(i-o),c[15]=1,c},lookAt(n,s,e){let t=n[0]-s[0],o=n[1]-s[1],i=n[2]-s[2],c=Math.hypot(t,o,i);t/=c,o/=c,i/=c;let a=e[1]*i-e[2]*o,r=e[2]*t-e[0]*i,u=e[0]*o-e[1]*t;c=Math.hypot(a,r,u)||1,a/=c,r/=c,u/=c;let d=o*u-i*r,p=i*a-t*u,b=t*r-o*a,l=new Float32Array(16);return l[0]=a,l[1]=d,l[2]=t,l[4]=r,l[5]=p,l[6]=o,l[8]=u,l[9]=b,l[10]=i,l[12]=-(a*n[0]+r*n[1]+u*n[2]),l[13]=-(d*n[0]+p*n[1]+b*n[2]),l[14]=-(t*n[0]+o*n[1]+i*n[2]),l[15]=1,l},place(n,s,e,t=0){let o=N.ident(),i=Math.cos(t),c=Math.sin(t);return o[0]=i,o[2]=-c,o[8]=c,o[10]=i,o[12]=n,o[13]=s,o[14]=e,o},apply(n,s){let e=s[0],t=s[1],o=s[2],i=n[3]*e+n[7]*t+n[11]*o+n[15];return[(n[0]*e+n[4]*t+n[8]*o+n[12])/i,(n[1]*e+n[5]*t+n[9]*o+n[13])/i,(n[2]*e+n[6]*t+n[10]*o+n[14])/i]}};function T(n,s=1){let e=n.replace("#","");return[0,2,4].map(o=>parseInt(e.slice(o,o+2),16)/255).map(o=>Math.pow(o,2.2)*s)}var K=class{constructor(){this.pos=[],this.nor=[],this.col=[],this.mat=[],this.idx=[]}get vcount(){return this.pos.length/3}v(s,e,t,o){return this.pos.push(s[0],s[1],s[2]),this.nor.push(e[0],e[1],e[2]),this.col.push(t[0],t[1],t[2]),this.mat.push(o),this.vcount-1}quad(s,e,t,o,i,c,a){let r=this.v(s,i,c,a);this.v(e,i,c,a),this.v(t,i,c,a),this.v(o,i,c,a),this.idx.push(r,r+1,r+2,r,r+2,r+3)}box(s,e,t,o,i,c,a,r=0){this.quad([o,e,t],[o,i,t],[o,i,c],[o,e,c],[1,0,0],a,r),this.quad([s,e,c],[s,i,c],[s,i,t],[s,e,t],[-1,0,0],a,r),this.quad([s,i,t],[s,i,c],[o,i,c],[o,i,t],[0,1,0],a,r),this.quad([s,e,c],[s,e,t],[o,e,t],[o,e,c],[0,-1,0],a,r),this.quad([s,e,c],[o,e,c],[o,i,c],[s,i,c],[0,0,1],a,r),this.quad([o,e,t],[s,e,t],[s,i,t],[o,i,t],[0,0,-1],a,r)}rbox(s,e,t,o,i,c,a,r,u=0,d=3){a=Math.max(5e-4,Math.min(a,(o-s)/2.01,(i-e)/2.01,(c-t)/2.01));let p=(M,S)=>{let A=[];for(let C=0;C<=d;C++)A.push(M+a*(1-Math.cos(C/d*(Math.PI/2))));for(let C=d;C>=0;C--)A.push(S-a*(1-Math.cos(C/d*(Math.PI/2))));return A},b=s+a,l=e+a,m=t+a,g=o-a,v=i-a,y=c-a,E=(M,S,A)=>Math.max(S,Math.min(A,M)),x=[[0,o,1,2,1],[0,s,2,1,-1],[1,i,2,0,1],[1,e,0,2,-1],[2,c,0,1,1],[2,t,1,0,-1]],f=[s,e,t],F=[o,i,c];for(let[M,S,A,C,Jt]of x){let Tt=p(f[A],F[A]),Lt=p(f[C],F[C]),Qt=this.vcount;for(let J of Tt)for(let Q of Lt){let P=[0,0,0];P[M]=S,P[A]=J,P[C]=Q;let q=[E(P[0],b,g),E(P[1],l,v),E(P[2],m,y)],V=[P[0]-q[0],P[1]-q[1],P[2]-q[2]],Z=Math.hypot(V[0],V[1],V[2]);Z<1e-9&&(V=[0,0,0],V[M]=Jt,Z=1);let rt=[V[0]/Z,V[1]/Z,V[2]/Z];this.v([q[0]+rt[0]*a,q[1]+rt[1]*a,q[2]+rt[2]*a],rt,r,u)}let Y=Lt.length;for(let J=0;J<Tt.length-1;J++)for(let Q=0;Q<Y-1;Q++){let P=Qt+J*Y+Q;this.idx.push(P,P+Y,P+Y+1,P,P+Y+1,P+1)}}}cyl(s,e,t,o,i,c=0,a=24,r=!0){let u=(o+1)%3,d=(o+2)%3,p=g=>{let v=[];for(let y=0;y<=a;y++){let E=y/a*Math.PI*2,x=[...s];x[u]+=Math.cos(E)*e,x[d]+=Math.sin(E)*e,x[o]+=g;let f=[0,0,0];f[u]=Math.cos(E),f[d]=Math.sin(E),v.push([x,f])}return v},b=p(0),l=p(t),m=this.vcount;for(let g=0;g<=a;g++)this.v(b[g][0],b[g][1],i,c),this.v(l[g][0],l[g][1],i,c);for(let g=0;g<a;g++){let v=m+g*2;this.idx.push(v,v+1,v+3,v,v+3,v+2)}if(r)for(let[g,v]of[[0,-1],[t,1]]){let y=[0,0,0];y[o]=v;let E=[...s];E[o]+=g;let x=this.v(E,y,i,c),f=g===0?b:l;for(let F=0;F<=a;F++)this.v(f[F][0],y,i,c);for(let F=0;F<a;F++)this.idx.push(x,x+1+F,x+2+F)}}ring(s,e,t,o,i,c,a=0,r=32){let u=(o+1)%3,d=(o+2)%3,p=[0,0,0];p[o]=i;let b=this.vcount;for(let l=0;l<=r;l++){let m=l/r*Math.PI*2;for(let g of[e,t]){let v=[...s];v[u]+=Math.cos(m)*g,v[d]+=Math.sin(m)*g,this.v(v,p,c,a)}}for(let l=0;l<r;l++){let m=b+l*2;this.idx.push(m,m+1,m+3,m,m+3,m+2)}}hexa(s,e,t=0){let o=s.reduce((c,a)=>[c[0]+a[0]/8,c[1]+a[1]/8,c[2]+a[2]/8],[0,0,0]),i=[[0,1,2,3],[5,4,7,6],[4,0,3,7],[1,5,6,2],[3,2,6,7],[4,5,1,0]];for(let c of i){let[a,r,u,d]=c.map(v=>s[v]),p=[r[0]-a[0],r[1]-a[1],r[2]-a[2]],b=[d[0]-a[0],d[1]-a[1],d[2]-a[2]],l=[p[1]*b[2]-p[2]*b[1],p[2]*b[0]-p[0]*b[2],p[0]*b[1]-p[1]*b[0]],m=Math.hypot(...l)||1;l=l.map(v=>v/m);let g=[(a[0]+u[0])/2-o[0],(a[1]+u[1])/2-o[1],(a[2]+u[2])/2-o[2]];l[0]*g[0]+l[1]*g[1]+l[2]*g[2]<0&&(l=l.map(v=>-v)),this.quad(a,r,u,d,l,e,t)}}},ne=`#version 300 es
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNor;
+layout(location=2) in vec3 aCol;
+layout(location=3) in float aMat;
+uniform mat4 uModel, uVP, uLightVP;
+out vec3 vW; out vec3 vN; out vec3 vC; out float vM; out vec4 vL;
+void main(){
+  vec4 w = uModel * vec4(aPos, 1.0);
+  vW = w.xyz; vN = mat3(uModel) * aNor; vC = aCol; vM = aMat; vL = uLightVP * w;
+  gl_Position = uVP * w;
+}`,oe=`#version 300 es
+precision highp float;
+precision highp sampler2DShadow;
+in vec3 vW; in vec3 vN; in vec3 vC; in float vM; in vec4 vL;
+uniform sampler2DShadow uShadow;
+uniform vec3 uLightDir, uLightCol, uSky, uGround, uCam, uTint;
+uniform float uTintK, uExposure, uFloorScale;
+out vec4 outColor;
+float h1(float n){ return fract(sin(n) * 43758.5453); }
+void main(){
+  vec3 n = normalize(vN);
+  vec3 base = vC;
+  float specK = 0.16, shin = 28.0;
+  int m = int(vM + 0.5);
+  if (m == 1) {
+    float pw = 0.155;
+    float row = floor(vW.z / pw);
+    float t = fract(vW.z / pw);
+    float h = h1(row * 12.9898);
+    float seg = floor((vW.x + h * 3.1) / 2.44);
+    float h2 = h1(seg * 78.233 + row);
+    base = mix(vec3(0.20, 0.11, 0.055), vec3(0.32, 0.19, 0.10), h * 0.7 + h2 * 0.3) * uFloorScale;
+    float g = sin(vW.x * 38.0 + h * 17.0 + sin(vW.x * 2.3 + row) * 3.0) * 0.5 + 0.5;
+    base *= 0.9 + 0.1 * g;
+    if (t < 0.025 || t > 0.975) base *= 0.45;
+    if (fract((vW.x + h * 3.1) / 2.44) < 0.0025) base *= 0.5;
+    specK = 0.04;
+  } else if (m == 2) {
+    bool side = abs(n.z) > 0.5;
+    float coord = side ? vW.x : vW.z;
+    float s = sin(coord / 0.14 * 3.14159);
+    vec3 tang = side ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+    n = normalize(n + tang * s * 0.55);
+    specK = 0.22; shin = 34.0;
+  } else if (m == 3) {
+    specK = 0.75; shin = 110.0;
+  } else if (m == 4) {
+    specK = 0.03; shin = 8.0;
+  } else if (m == 5) {
+    specK = 0.5; shin = 60.0;
+  } else if (m == 6) {
+    float st = fract((vW.x + vW.z) / 0.18);
+    base = st < 0.5 ? vec3(0.62, 0.38, 0.05) : vec3(0.05, 0.05, 0.05);
+    specK = 0.02;
+  }
+  vec3 L = normalize(uLightDir);
+  float ndl = max(dot(n, L), 0.0);
+  vec3 sp = vL.xyz / vL.w * 0.5 + 0.5;
+  float sh = 0.0;
+  vec2 tx = 1.0 / vec2(textureSize(uShadow, 0));
+  for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++)
+    sh += texture(uShadow, vec3(sp.xy + vec2(float(i), float(j)) * tx * 1.25, sp.z - 0.0012));
+  sh /= 9.0;
+  if (sp.x < 0.0 || sp.x > 1.0 || sp.y < 0.0 || sp.y > 1.0 || sp.z > 1.0) sh = 1.0;
+  float hemi = n.y * 0.5 + 0.5;
+  vec3 amb = mix(uGround, uSky, hemi);
+  vec3 V = normalize(uCam - vW);
+  vec3 H = normalize(L + V);
+  float spec = pow(max(dot(n, H), 0.0), shin) * specK * (0.35 + 0.65 * sh);
+  vec3 c = base * (amb + uLightCol * ndl * sh);
+  c += base * 0.18 * max(dot(n, normalize(vec3(-0.6, 0.35, -0.5))), 0.0);
+  c += vec3(spec);
+  c = mix(c, uTint, uTintK);
+  c = vec3(1.0) - exp(-c * uExposure);
+  outColor = vec4(pow(c, vec3(1.0 / 2.2)), 1.0);
+}`,se=`#version 300 es
+layout(location=0) in vec3 aPos;
+uniform mat4 uModel, uLightVP;
+void main(){ gl_Position = uLightVP * uModel * vec4(aPos, 1.0); }`,ie=`#version 300 es
+precision mediump float;
+out vec4 o;
+void main(){ o = vec4(1.0); }`,re=`#version 300 es
+layout(location=0) in vec3 aPos;
+uniform mat4 uModel, uVP;
+void main(){ gl_Position = uVP * uModel * vec4(aPos, 1.0); }`,ae=`#version 300 es
+precision mediump float;
+uniform vec3 uColor;
+out vec4 o;
+void main(){ o = vec4(uColor, 1.0); }`;function bt(n,s,e){let t=(a,r)=>{let u=n.createShader(a);if(n.shaderSource(u,r),n.compileShader(u),!n.getShaderParameter(u,n.COMPILE_STATUS))throw new Error(n.getShaderInfoLog(u));return u},o=n.createProgram();if(n.attachShader(o,t(n.VERTEX_SHADER,s)),n.attachShader(o,t(n.FRAGMENT_SHADER,e)),n.linkProgram(o),!n.getProgramParameter(o,n.LINK_STATUS))throw new Error(n.getProgramInfoLog(o));let i={},c=n.getProgramParameter(o,n.ACTIVE_UNIFORMS);for(let a=0;a<c;a++){let r=n.getActiveUniform(o,a);i[r.name]=n.getUniformLocation(o,r.name)}return{p:o,u:i}}var ct=class{constructor(s){let e=s.getContext("webgl2",{antialias:!0,preserveDrawingBuffer:!0});if(!e)throw new Error("WebGL2 が使えないブラウザです");this.gl=e,this.canvas=s,this.main=bt(e,ne,oe),this.depth=bt(e,se,ie),this.line=bt(e,re,ae),this.shadowSize=2048,this.shadowTex=e.createTexture(),e.bindTexture(e.TEXTURE_2D,this.shadowTex),e.texStorage2D(e.TEXTURE_2D,1,e.DEPTH_COMPONENT24,this.shadowSize,this.shadowSize),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_MIN_FILTER,e.LINEAR),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_MAG_FILTER,e.LINEAR),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_WRAP_S,e.CLAMP_TO_EDGE),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_WRAP_T,e.CLAMP_TO_EDGE),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_COMPARE_MODE,e.COMPARE_REF_TO_TEXTURE),e.texParameteri(e.TEXTURE_2D,e.TEXTURE_COMPARE_FUNC,e.LEQUAL),this.shadowFbo=e.createFramebuffer(),e.bindFramebuffer(e.FRAMEBUFFER,this.shadowFbo),e.framebufferTexture2D(e.FRAMEBUFFER,e.DEPTH_ATTACHMENT,e.TEXTURE_2D,this.shadowTex,0),e.bindFramebuffer(e.FRAMEBUFFER,null)}mesh(s){let e=this.gl,t=e.createVertexArray();e.bindVertexArray(t);let o=[],i=(a,r,u)=>{let d=e.createBuffer();e.bindBuffer(e.ARRAY_BUFFER,d),e.bufferData(e.ARRAY_BUFFER,new Float32Array(r),e.STATIC_DRAW),e.enableVertexAttribArray(a),e.vertexAttribPointer(a,u,e.FLOAT,!1,0,0),o.push(d)};i(0,s.pos,3),i(1,s.nor,3),i(2,s.col,3),i(3,s.mat,1);let c=e.createBuffer();return e.bindBuffer(e.ELEMENT_ARRAY_BUFFER,c),e.bufferData(e.ELEMENT_ARRAY_BUFFER,new Uint32Array(s.idx),e.STATIC_DRAW),o.push(c),e.bindVertexArray(null),{vao:t,count:s.idx.length,bufs:o,lines:!1}}lineMesh(s){let e=this.gl,t=e.createVertexArray();e.bindVertexArray(t);let o=e.createBuffer();return e.bindBuffer(e.ARRAY_BUFFER,o),e.bufferData(e.ARRAY_BUFFER,new Float32Array(s),e.STATIC_DRAW),e.enableVertexAttribArray(0),e.vertexAttribPointer(0,3,e.FLOAT,!1,0,0),e.bindVertexArray(null),{vao:t,count:s.length/3,bufs:[o],lines:!0}}free(s){if(!s)return;let e=this.gl;e.deleteVertexArray(s.vao);for(let t of s.bufs)e.deleteBuffer(t)}resize(){let s=Math.min(window.devicePixelRatio||1,2),e=Math.max(1,Math.round(this.canvas.clientWidth*s)),t=Math.max(1,Math.round(this.canvas.clientHeight*s));return(this.canvas.width!==e||this.canvas.height!==t)&&(this.canvas.width=e,this.canvas.height=t),[e,t]}render(s,e){let t=this.gl,[o,i]=this.resize(),c=s.env,a=c.center,r=c.radius,u=c.lightDir,d=[a[0]+u[0]*r*2,a[1]+u[1]*r*2,a[2]+u[2]*r*2],p=N.lookAt(d,a,[0,1,0]),b=N.ortho(-r,r,-r,r,r*.2,r*4),l=N.mul(b,p);t.enable(t.DEPTH_TEST),t.disable(t.CULL_FACE),t.bindFramebuffer(t.FRAMEBUFFER,this.shadowFbo),t.viewport(0,0,this.shadowSize,this.shadowSize),t.clear(t.DEPTH_BUFFER_BIT),t.useProgram(this.depth.p),t.uniformMatrix4fv(this.depth.u.uLightVP,!1,l),t.enable(t.POLYGON_OFFSET_FILL),t.polygonOffset(2,4);for(let E of s.objects)!E.visible||E.noShadow||(t.uniformMatrix4fv(this.depth.u.uModel,!1,E.model),t.bindVertexArray(E.mesh.vao),t.drawElements(t.TRIANGLES,E.mesh.count,t.UNSIGNED_INT,0));t.disable(t.POLYGON_OFFSET_FILL),t.bindFramebuffer(t.FRAMEBUFFER,null),t.viewport(0,0,o,i),t.clearColor(c.bg[0],c.bg[1],c.bg[2],1),t.clear(t.COLOR_BUFFER_BIT|t.DEPTH_BUFFER_BIT);let m=N.perspective(e.fov,o/i,.05,200),g=N.lookAt(e.eye,e.target,[0,1,0]),v=N.mul(m,g);this.lastVP=v,this.lastSize=[o,i],t.useProgram(this.main.p);let y=this.main.u;t.uniformMatrix4fv(y.uVP,!1,v),t.uniformMatrix4fv(y.uLightVP,!1,l),t.uniform3fv(y.uLightDir,u),t.uniform3fv(y.uLightCol,c.lightCol),t.uniform3fv(y.uSky,c.sky),t.uniform3fv(y.uGround,c.ground),t.uniform3fv(y.uCam,e.eye),t.uniform1f(y.uExposure,c.exposure),t.uniform1f(y.uFloorScale,c.floorScale||1),t.activeTexture(t.TEXTURE0),t.bindTexture(t.TEXTURE_2D,this.shadowTex),t.uniform1i(y.uShadow,0);for(let E of s.objects)E.visible&&(t.uniformMatrix4fv(y.uModel,!1,E.model),t.uniform3fv(y.uTint,E.tint||[0,0,0]),t.uniform1f(y.uTintK,E.tintK||0),t.bindVertexArray(E.mesh.vao),t.drawElements(t.TRIANGLES,E.mesh.count,t.UNSIGNED_INT,0));if(s.lines&&s.lines.length){t.useProgram(this.line.p),t.uniformMatrix4fv(this.line.u.uVP,!1,v);for(let E of s.lines)E.visible!==!1&&(t.uniformMatrix4fv(this.line.u.uModel,!1,E.model||N.ident()),t.uniform3fv(this.line.u.uColor,E.color),t.bindVertexArray(E.mesh.vao),t.drawArrays(t.LINES,0,E.mesh.count))}t.bindVertexArray(null)}project(s){if(!this.lastVP)return null;let e=this.lastVP,t=e[0]*s[0]+e[4]*s[1]+e[8]*s[2]+e[12],o=e[1]*s[0]+e[5]*s[1]+e[9]*s[2]+e[13],i=e[3]*s[0]+e[7]*s[1]+e[11]*s[2]+e[15];if(i<=0)return null;let c=this.lastSize[0]/this.canvas.clientWidth;return[(t/i+1)/2*this.lastSize[0]/c,(1-o/i)/2*this.lastSize[1]/c]}},lt=class{constructor(s,e,t,o){this.target=s,this.dist=e,this.theta=t,this.phi=o,this.fov=38*Math.PI/180,this.minDist=1.5,this.maxDist=60}get eye(){let s=Math.sin(this.phi);return[this.target[0]+this.dist*s*Math.cos(this.theta),this.target[1]+this.dist*Math.cos(this.phi),this.target[2]+this.dist*s*Math.sin(this.theta)]}rotate(s,e){this.theta+=s*.008,this.phi=Math.max(.12,Math.min(Math.PI/2-.02,this.phi-e*.008))}zoom(s){this.dist=Math.max(this.minDist,Math.min(this.maxDist,this.dist*s))}pan(s,e){let t=this.dist*.0012,o=-Math.sin(this.theta),i=Math.cos(this.theta);this.target=[this.target[0]-o*s*t,this.target[1]+e*t,this.target[2]-i*s*t]}ray(s,e,t,o){let i=this.eye,c=[this.target[0]-i[0],this.target[1]-i[1],this.target[2]-i[2]],a=Math.hypot(...c),r=c.map(y=>y/a),u=[r[1]*0-r[2]*1,r[2]*0-r[0]*0,r[0]*1-r[1]*0],d=Math.hypot(...u)||1;u=u.map(y=>y/d);let p=[u[1]*r[2]-u[2]*r[1],u[2]*r[0]-u[0]*r[2],u[0]*r[1]-u[1]*r[0]],b=Math.tan(this.fov/2),l=(s/t*2-1)*b*(t/o),m=(1-e/o*2)*b,g=[r[0]+u[0]*l+p[0]*m,r[1]+u[1]*l+p[1]*m,r[2]+u[2]*l+p[2]*m],v=Math.hypot(...g);return{o:i,d:g.map(y=>y/v)}}};function _t(n,s,e){let t=new Map,o=0,i="rotate",c=0;n.addEventListener("contextmenu",r=>r.preventDefault()),n.addEventListener("pointerdown",r=>{if(n.setPointerCapture(r.pointerId),t.set(r.pointerId,[r.clientX,r.clientY]),i=r.button===2||r.shiftKey?"pan":"rotate",c=0,t.size===2){let[u,d]=[...t.values()];o=Math.hypot(u[0]-d[0],u[1]-d[1])}}),n.addEventListener("pointermove",r=>{if(!t.has(r.pointerId))return;let u=t.get(r.pointerId),d=r.clientX-u[0],p=r.clientY-u[1];if(t.set(r.pointerId,[r.clientX,r.clientY]),c+=Math.abs(d)+Math.abs(p),t.size===2){let[b,l]=[...t.values()],m=Math.hypot(b[0]-l[0],b[1]-l[1]);o&&s.zoom(o/m),o=m,s.pan(d*.5,p*.5)}else i==="pan"?s.pan(d,p):s.rotate(d,p);e()});let a=r=>{t.delete(r.pointerId),t.size<2&&(o=0)};return n.addEventListener("pointerup",a),n.addEventListener("pointercancel",a),n.addEventListener("wheel",r=>{r.preventDefault(),s.zoom(Math.exp(r.deltaY*.0012)),e()},{passive:!1}),{wasDrag:()=>c>6}}var w={gap:T("#1E1F21"),kick:T("#4A4B4D"),black:T("#18191B"),darkPlastic:T("#2C2D30"),rubber:T("#26272A"),metal:T("#B5B8BB"),darkMetal:T("#55585C"),screen:T("#11161C"),crtScreen:T("#26302F"),smoked:T("#2D3439"),display:T("#0E1B1C"),grille:T("#3A3B3C")},L=(n,s)=>n.map(e=>e*s);function ce(n,s){return s==="cat"?T(I[n.cat].tint):T(n.color,n.wear)}function le(n){return parseInt(n.slice(1,3),16)+parseInt(n.slice(3,5),16)+parseInt(n.slice(5,7),16)<330}function ue(n,s,e,t,o,i,c){let r=c!=="cat"&&le(s.color),u=r?3:0,d=r?w.metal:L(i,.62);n.box(.02,0,.03,e-.02,.035,t-.03,w.kick,4),n.rbox(0,.035,0,e,o,t-.026,.012,i),n.box(.004,.035+.003,t-.03,e-.004,o-.004,t-.024,w.gap,4);let p=o-.035,b=m=>.035+p*m,l=[];s.type==="fridge_s"?(l.push({x0:0,x1:e,y0:b(.42),y1:o,kind:"door",hx:"right"}),l.push({x0:0,x1:e,y0:.035,y1:b(.42),kind:"door",hx:"right",low:!0})):s.type==="fridge_m"?(l.push({x0:0,x1:e,y0:b(.47),y1:o,kind:"door",hx:s.variant>.5?"right":"left"}),l.push({x0:0,x1:e,y0:b(.25),y1:b(.47),kind:"drawer"}),l.push({x0:0,x1:e,y0:.035,y1:b(.25),kind:"drawer"})):(l.push({x0:0,x1:e/2,y0:b(.52),y1:o,kind:"door",hx:"right"}),l.push({x0:e/2,x1:e,y0:b(.52),y1:o,kind:"door",hx:"left"}),l.push({x0:0,x1:e/2,y0:b(.4),y1:b(.52),kind:"drawer"}),l.push({x0:e/2,x1:e,y0:b(.4),y1:b(.52),kind:"drawer"}),l.push({x0:0,x1:e,y0:b(.2),y1:b(.4),kind:"drawer"}),l.push({x0:0,x1:e,y0:.035,y1:b(.2),kind:"drawer"}));for(let m of l)if(n.rbox(m.x0+.004,m.y0+.004,t-.03,m.x1-.004,m.y1-.004,t,.009,i,u),m.kind==="door"){let v=m.hx==="right"?m.x1-.03:m.x0+.018,y=m.low?m.y1-.22:m.y0+.06,E=m.low?m.y1-.05:Math.min(m.y1-.08,m.y0+.36);n.box(v,y,t-.002,v+.012,E,t+.006,d,r?5:0)}else n.box(m.x0+.05,m.y1-.032,t-.002,m.x1-.05,m.y1-.02,t+.007,d,r?5:0)}function de(n,s,e,t,o,i){let c=t-.012;n.box(.02,0,.02,e-.02,.03,c-.02,w.kick,4);for(let[a,r]of[[.04,.04],[e-.04,.04],[.04,c-.04],[e-.04,c-.04]])n.cyl([a-.01,.016,r],.016,.02,0,w.rubber,4,12);n.rbox(0,.03,0,e,o-.075,c,.015,i),n.box(.006,o-.077,.006,e-.006,o-.072,c-.006,w.gap,4),n.rbox(0,o-.073,0,e,o,c+.004,.012,L(i,1.02)),n.rbox(e/2-.07,o-.055,c,e/2+.07,o-.03,t,.006,L(i,.8)),n.cyl([e-.08,.13,c],.02,.012,2,w.darkPlastic,4,16)}function he(n,s,e,t,o,i){n.box(.025,0,.025,e-.025,.045,t-.025,w.kick,4),n.rbox(0,.045,0,e,o-.07,t,.02,i);let c=L(i,.93);n.rbox(.006,o-.12,.006,e-.006,o-.002,.17,.016,c),n.box(e*.3,o-.004,.035,e*.7,o,.12,w.display,3),n.rbox(.014,o-.085,.172,e-.014,o-.052,t-.014,.012,L(i,1.01)),n.box(.07,o-.053,.215,e-.07,o-.049,t-.065,w.smoked,3),n.box(e/2-.08,o-.08,t-.016,e/2+.08,o-.058,t-.004,L(i,.78)),n.box(.03,.09,t-5e-4,e-.03,.093,t+.001,L(i,.85))}function Rt(n,s,e,t,o,i,c,a){let r=s*.47;n.cyl([r,a,e-.014],c,.014,2,w.metal,5,40),n.cyl([r,a,e-.0135],c*.74,.0145,2,w.smoked,3,40),n.ring([r,a,e+9e-4],c*.74,c*.8,2,1,L(w.metal,.7),5,40),n.box(r+c*.82,a-.05,e-.002,r+c*.95,a+.05,e+.004,w.darkPlastic,4)}function fe(n,s,e,t,o,i){n.box(.03,0,.03,e-.03,.05,t-.03,w.kick,4),n.rbox(0,.05,0,e,o,t-.012,.03,i);let a=Math.min(e*.33,(o-.05)*.3);Rt(n,e,t,o,i,.05,a,.05+(o-.05)*.45),n.box(.03,o-.115,t-.014,e-.03,o-.035,t-.008,w.smoked,3),n.box(.045,o-.105,t-.009,.2,o-.045,t-.007,L(i,.9)),n.box(e*.6,o-.09,t-.009,e*.85,o-.06,t-.006,w.display,3)}function pe(n,s,e,t,o,i){n.box(.03,0,.03,e-.03,.03,t-.03,w.kick,4),n.rbox(0,.03,0,e,o,t-.012,.02,i);let a=Math.min(e*.28,(o-.03)*.32);Rt(n,e,t,o,i,.03,a,.03+(o-.03)*.44),n.box(.03,o-.075,t-.014,e-.03,o-.025,t-.008,L(i,.88));for(let r=0;r<4;r++)n.cyl([e*.6+r*.035,o-.05,t-.009],.009,.006,2,w.darkPlastic,4,12)}function me(n,s,e,t,o){let i=e>1.1?.07:e>.9?.062:.055,c=Math.min(o-.05,e*.585),a=o-c,r=t*.5;if(n.rbox(0,a,r-i*.35,e,o,r+i*.5,.006,w.black,0),n.rbox(e*.18,a+c*.12,r-i*.5,e*.82,a+c*.82,r-i*.3,.012,w.darkPlastic,4),n.box(.011,a+.022,r+i*.5,e-.011,o-.011,r+i*.5+.0015,w.screen,3),n.box(e/2-.02,a+.004,r+i*.5,e/2+.02,a+.012,r+i*.5+.002,L(w.metal,.6),5),s.variant<.5)n.rbox(e/2-e*.17,0,.004,e/2+e*.17,.014,t-.004,.005,w.darkMetal,5),n.box(e/2-.045,.014,r-i*.3-.03,e/2+.045,a+.04,r-i*.3,w.darkPlastic,4);else for(let u of[e*.11,e*.89])n.box(u-.016,0,.004,u+.016,.012,t-.004,w.darkMetal,5),n.box(u-.012,.012,r-.015,u+.012,a+.03,r+.005,w.darkMetal,5)}function xe(n,s,e,t,o,i){let c=t*.3;n.rbox(0,0,t-c,e,o,t-.006,.022,i),n.rbox(e*.07,o*.21,t-.02,e*.93,o*.94,t,.03,w.crtScreen,3),n.box(e*.06,o*.05,t-.0075,e*.38,o*.16,t-.004,L(i,.55),4),n.box(e*.62,o*.05,t-.0075,e*.94,o*.16,t-.004,L(i,.55),4);for(let r=0;r<4;r++)n.box(e*.42+r*.03,o*.08,t-.008,e*.42+r*.03+.018,o*.12,t-.003,w.darkPlastic,4);let a=t-c;n.hexa([[e*.05,o*.04,a],[e*.95,o*.04,a],[e*.95,o*.97,a],[e*.05,o*.97,a],[e*.26,o*.16,0],[e*.74,o*.16,0],[e*.74,o*.7,0],[e*.26,o*.7,0]],L(i,.94),0),n.box(e*.3,0,a-t*.35,e*.7,o*.04,a,L(i,.8),4)}function be(n,s,e,t,o,i){n.rbox(0,0,0,e,o-.004,t,.035,i),n.rbox(.006,o*.4,.012,e-.006,o,t-.05,.025,L(i,1.015)),n.box(.05,o*.42,t-.002,e-.05,o*.86,t+.001,w.grille,4),n.box(.05,o*.62,t+.001,e-.05,o*.66,t+.003,L(i,.9)),n.box(e*.78,o-.004,t*.62,e*.9,o,t*.72,w.display,3)}function ge(n,s,e,t,o,i){let a=e-.035;n.box(.04,0,0,.11,.03,t,w.kick,4),n.box(a-.13,0,0,a-.06,.03,t,w.kick,4),n.rbox(0,.03,.004,a,o,t,.008,i),n.box(.03,.03+.03,0,a-.05,o-.03,.005,L(i,.55),4),n.rbox(a-.006,.03+.06,t*.18,e,.03+.26,t*.82,.01,L(i,.95));let r=a*.42,u=.03+(o-.03)*.5,d=Math.min(a*.37,(o-.03)*.44),p=L(i,.82);n.cyl([r,u,t-.004],d,.0045,2,w.grille,4,40),n.cyl([r,u,t-.004],d*.13,.008,2,L(w.grille,1.5),4,20);for(let b=1;b<=5;b++){let l=d*b/5.2;n.ring([r,u,t+9e-4],l-.004,l,2,1,p,0,40)}n.box(r-d,u-.003,t+4e-4,r+d,u+.003,t+.0014,p),n.box(r-.003,u-d,t+4e-4,r+.003,u+d,t+.0014,p),n.box(a*.83,.03+.03,t-5e-4,a*.83+.003,o-.03,t+8e-4,L(i,.7))}var ve={fridge:ue,freezer:de,washer:he,drum:fe,dryer:pe,lcd:me,crt:xe,acin:be,acout:ge};function It(n,s="real"){let e=new K,t=n.w/1e3,o=n.d/1e3,i=n.h/1e3;return ve[n.cat](e,n,t,o,i,ce(n,s),s),e}function zt(n,s){let e=new K,t=n.L/1e3,o=n.W/1e3,i=n.H/1e3,c=T(n.frame),a=T(s?"#B9BEC2":"#C9CDD0"),r=.045;e.box(-r,-.03,-r,t+r,0,o+r,[.3,.2,.1],1),e.box(-.08,-.17,-.08,t+.08,-.03,o+.08,L(c,.8),0),e.box(-r,0,0,-.004,i,o,a,2),e.box(-r-.006,0,-.004,-r,i,o+.004,c,2),e.box(0,0,-r,t,i,-.004,a,2),e.box(0,0,-r-.006,t,i,-r,c,2);let u=.11;return e.box(-.09,-.03,-.09,-.09+u,i+.12,-.09+u,c),e.box(-.09,-.03,o+.09-u,-.09+u,i+.12,o+.09,c),e.box(t+.09-u,-.03,-.09,t+.09,i+.12,-.09+u,c),e.box(t+.09-u,-.03,o+.09-u,t+.09,i+.12,o+.09,c),e.box(-.09,i,-.08,t+.09,i+.11,-.01,c),e.box(-.09,i,o+.01,t+.09,i+.11,o+.08,c),e.box(-.09,i,-.08,0,i+.11,o+.08,c),e.box(t,i,-.08,t+.09,i+.11,o+.08,c),e.box(-.09,-.17,o+.01,t+.09,0,o+.09,L(c,.9)),e.box(-40,-.18,-40,40,-.17,40,s?[.05,.055,.06]:[.55,.56,.55],4),e}var k=n=>document.getElementById(n),$=(n,s=0)=>n.toLocaleString("ja-JP",{minimumFractionDigits:s,maximumFractionDigits:s}),ye=window.matchMedia("(prefers-reduced-motion: reduce)").matches,kt=5,Mt={gap:20,topClear:50,minSupport:.8},h={containerId:"iso20",policy:"learned",buffer:0,total:300,speed:3,seed:1,color:"real",running:!1,viewBin:null,sim:null,anim:null,pause:0,last:null,hover:null,checks:new Map};function st(){let n=R[h.containerId];h.sim=new et(n,pt(h.seed),{...Mt,policy:h.policy,buffer:h.buffer,lookahead:kt}),h.anim=null,h.pause=0,h.last=null,h.viewBin=null,h.checks=new Map,ht(),Ot(),X(!1),G(),Yt(),Gt(),D=!0}function O(){return h.total>0&&h.sim.processed>=h.total}function X(n){h.running=n&&!O(),k("startBtn").textContent=h.running?"一時停止":O()?"流し終わりました":h.sim&&h.sim.processed?"続きを流す":"流し始める",k("startBtn").disabled=O()}var _,U,Ee,D=!0,Ht=0,yt=[],it=new Map;function dt(){let n=document.documentElement.getAttribute("data-theme");return n?n==="dark":window.matchMedia("(prefers-color-scheme: dark)").matches}function j(){return 6.5}function ke(n){let s=dt(),e=getComputedStyle(document.documentElement).getPropertyValue("--stage").trim()||"#DEE2DF",t=n.L/1e3,o=n.W/1e3,i=[.42,1,.62],c=Math.hypot(...i),a=n.door==="side",r=a?t/2:(t+j())/2,u=a?(o+j())/2:o/2;return{bg:T(e).map(d=>Math.pow(d,1/2.2)),center:[r,1,u],radius:Math.hypot(a?t:t+j(),a?o+j():o,3)/2+.6,lightDir:i.map(d=>d/c),lightCol:s?[.95,.92,.86]:[1.05,1,.93],sky:s?[.36,.39,.43]:[.6,.62,.64],ground:s?[.16,.15,.14]:[.3,.28,.26],exposure:s?1.3:1.45}}var B=.32;function Me(n){let s=new K,e=n.L/1e3,t=n.W/1e3,o=j(),i=1.4,c=T(dt()?"#6F7B82":"#5E6A70"),a=T("#2B2D30"),r=T("#A9AEB2"),u=n.door==="side",d=(l,m,g)=>u?[e/2+g,m,t+.35+l]:[e+.35+l,m,t/2+g],p=(l,m,g,v,y,E,x,f)=>{let F=d(l,m,g),M=d(v,y,E);s.box(Math.min(F[0],M[0]),m,Math.min(F[2],M[2]),Math.max(F[0],M[0]),y,Math.max(F[2],M[2]),x,f)};p(0,B-.02,-i/2,o,B,i/2,a,4),p(0,B-.09,-i/2-.06,o,B+.025,-i/2,c,5),p(0,B-.09,i/2,o,B+.025,i/2+.06,c,5);for(let l=.3;l<o;l+=1.2)for(let m of[-i/2-.03,i/2+.03])p(l-.03,-.17,m-.03,l+.03,B-.09,m+.03,c,5);for(let l=.1;l<o;l+=.32){let m=d(l,B-.05,-i/2);s.cyl(m,.028,i,u?0:2,r,5,12,!0)}let b=.25+1*(h.buffer+1);return p(0,B+.001,-i/2-.12,b,B+.004,-i/2-.07,T("#D9780F"),4),p(0,B+.001,i/2+.07,b,B+.004,i/2+.12,T("#D9780F"),4),s}function Ot(){if(!_)return;for(let s of yt)_.free(s.mesh);let n=R[h.containerId];yt=[{mesh:_.mesh(zt(n,dt())),model:N.ident(),visible:!0},{mesh:_.mesh(Me(n)),model:N.ident(),visible:!0,belt:!0}],D=!0}function gt(n){let s=`${n.id}|${h.color}`;return it.has(s)||it.set(s,_.mesh(It(n,h.color))),it.get(s)}function ht(n){if(_)for(let[s,e]of it){let t=s.split("|")[0];n&&n.has(t)||(_.free(e),it.delete(s))}}function vt(n,s){let e=n.w/1e3,t=n.d/1e3,o=Math.cos(s.th),i=Math.sin(s.th),c=s.cx+o*(-e/2)+i*(-t/2),a=s.cz-i*(-e/2)+o*(-t/2);return N.place(c,s.by,a,s.th)}function Vt(n){return{cx:(n.x+n.ex/2)/1e3,by:n.z/1e3,cz:(n.y+n.ey/2)/1e3,th:n.rot?Math.PI/2:0}}function Et(){let n=R[h.containerId],s=n.L/1e3,e=n.W/1e3,t=n.door==="side",o=new Map,i=.3;for(let c of h.sim.queue){let a=c.w/1e3,r=i+a/2;o.set(c.id,t?{cx:s/2,by:B,cz:e+.35+r,th:Math.PI/2,u:r}:{cx:s+.35+r,by:B,cz:e/2,th:0,u:r}),i+=a+.3}return o}function Nt(n,s,e,t){let o=e<.5?2*e*e:1-Math.pow(-2*e+2,2)/2;return{cx:n.cx+(s.cx-n.cx)*o,by:n.by+(s.by-n.by)*o+t*Math.sin(Math.PI*e),cz:n.cz+(s.cz-n.cz)*o,th:n.th+(s.th-n.th)*o}}function wt(){let n=h.sim;return h.viewBin!=null?n.bins[h.viewBin]:n.bin}function we(){let n=[...yt],s=wt(),e=h.viewBin==null,t=h.anim,o=T(dt()?"#F0973A":"#D9780F");for(let i of s.placed)t&&t.item===i.item&&e||n.push({mesh:gt(i.item),model:vt(i.item,Vt(i)),visible:!0,tint:o,tintK:h.hover===i.item.id?.25:0});if(e){let i=Et(),c=j();for(let a of h.sim.queue){let r=i.get(a.id);t&&t.from.has(a.id)&&(r=Nt(t.from.get(a.id),r,t.t,0)),!(r.u>c-.2&&!(t&&t.from.has(a.id)))&&n.push({mesh:gt(a),model:vt(a,r),visible:!0,tint:o,tintK:0})}if(t){let a=Nt(t.start,t.end,t.t,.55);n.push({mesh:gt(t.item),model:vt(t.item,a),visible:!0,tint:o,tintK:.12})}}return n}function Ft(n){let s=R[h.containerId],e=s.L/1e3,t=s.W/1e3,o=s.door==="side",i=Math.max(o?e:e+j()*.7,5),c=o?[e/2,.8,t/2+1.6]:[e/2+j()*.35,.8,t/2],r={...{iso:{theta:o?.55:1.05,phi:.95,dist:i*.95+4.5},door:{theta:o?Math.PI/2:.05,phi:1.12,dist:7.5},top:{theta:Math.PI/2,phi:.13,dist:i*1.2+3.5}}[n]},u=k("view"),d=u.clientWidth&&u.clientHeight?u.clientWidth/u.clientHeight:1.5;d<1.45&&n!=="door"&&(r.dist*=Math.min(2.2,1.45/d)),U?(U.target=c,Object.assign(U,{theta:r.theta,phi:r.phi,dist:r.dist})):(U=new lt(c,r.dist,r.theta,r.phi),Ee=_t(k("view"),U,()=>{D=!0,Wt(null)})),n==="door"&&(U.target=o?[e/2,.9,t/2]:[e*.6,.9,t/2]),Wt(n),D=!0}function Wt(n){document.querySelectorAll("[data-view]").forEach(s=>s.setAttribute("aria-pressed",String(s.dataset.view===n)))}function Fe(){let n=R[h.containerId],s=n.L/1e3,e=n.W/1e3,t=n.H/1e3,o=n.door==="side",i=wt(),c=[{text:`No.${i.index}${i.closed?"（満載）":h.viewBin==null?"（積込中）":""}`,at:[s/2,t+.3,e/2]}];h.viewBin==null&&c.push({text:"コンベヤ",at:o?[s/2+.9,B+.1,e+.35+j()-.4]:[s+.35+j()-.4,B+.1,e/2+.9]});let a=k("tags");for(;a.children.length<c.length;){let r=document.createElement("div");r.className="tag3d",a.appendChild(r)}for(let r=c.length;r<a.children.length;r++)a.children[r].hidden=!0;c.forEach((r,u)=>{let d=a.children[u],p=_.project(r.at);d.hidden=!p,p&&(d.textContent=r.text,d.style.left=`${p[0]}px`,d.style.top=`${p[1]}px`)})}function Se(){let n=h.sim,s=Et(),e=n.step();h.last=e,e.closed&&St(e.closed);let t=Et(),o=new Map;for(let a of n.queue)s.has(a.id)&&o.set(a.id,s.get(a.id));let i=s.get(e.item.id),c=Vt(e.placement);return{ev:e,start:i,end:c,from:o,after:t}}function St(n){let s=new Set(h.sim.queue.map(t=>t.id));ht(s);let e=nt(n);k("banner").hidden=!1,k("banner").textContent=`No.${n.index} が満載（${e.count}台・容積${(e.volUtil*100).toFixed(0)}%）→ No.${n.index+1} へ`,h.bannerUntil=performance.now()+2200}function Kt(n){let s=Math.min(.1,(n-Ht)/1e3||0);Ht=n;let e=h.sim;if(e&&h.viewBin==null){if(h.anim)h.pause>0?h.pause-=s*Math.max(1,h.speed):(h.anim.t=Math.min(1,h.anim.t+s*Math.max(1,h.speed)/h.anim.dur),h.anim.t>=1&&(h.anim=null)),D=!0;else if(h.running&&!O()){if(h.speed===0||ye){let t=performance.now();for(;performance.now()-t<14&&!O();){let o=e.step();if(h.last=o,o.closed&&St(o.closed),h.speed!==0)break}}else{let t=Se();h.anim={item:t.ev.item,start:t.start,end:t.end,from:t.from,t:0,dur:.85},h.pause=t.ev.closed?.9:0}qt(),D=!0}}h.bannerUntil&&performance.now()>h.bannerUntil&&(k("banner").hidden=!0,h.bannerUntil=0),D&&_&&U&&e&&(D=!1,_.render({objects:we(),lines:[],env:ke(R[h.containerId])},U),Fe()),requestAnimationFrame(Kt)}var Ut=0;function qt(){Gt(),Yt(),O()&&X(!1);let n=performance.now();(n-Ut>120||O())&&(Ut=n,G())}function Xt(n,s){let e=n.y+n.ey/2;return e<s/3?"左":e>s*2/3?"右":"中央"}function Gt(){let n=h.last,s=R[h.containerId];if(!n){k("caption").textContent="「流し始める」を押すと、コンベヤで家電が流れてきます。";return}let e=n.placement,t=`奥から ${$(e.x/1e3,2)} m・${Xt(e,s.W)}・${e.tier+1}段目`;k("caption").innerHTML=`<span class="n">${n.item.id}</span>${n.item.label} → No.${n.bin.index} の ${t}（判断 ${$(n.ms,2)} ms${n.fromBuffer?"・待機場所から選択":""}）${O()?`。${$(h.sim.processed)}台を流し終わりました。`:""}`}function Yt(){let n=h.sim,s=h.buffer+1;k("queue").innerHTML=n.queue.slice(0,s+kt-1).map((e,t)=>`<li class="${t<s?"pool":""}"><span class="q">${t<s?h.buffer?"判断":"次":""}</span><span class="dot" style="background:${I[e.cat].tint}"></span>${e.label}</li>`).join("")}function Te(n){if(!h.checks.has(n.index)||!n.closed){let e=Dt({placements:n.placed},R[h.containerId],Mt).filter(t=>t.state==="ng"&&t.id!=="cog");if(n.closed)h.checks.set(n.index,e.length===0);else return e.length===0}return h.checks.get(n.index)}function G(){let n=h.sim,s=n.stats(),e=[["流した台数",`${$(s.processed)}<small>${h.total?`/ ${$(h.total)} 台`:"台"}</small>`],["使ったコンテナ",`${s.containers}<small>本</small>`],["平均容積率",s.avgFill==null?"—":`${(s.avgFill*100).toFixed(1)}<small>%</small>`],["1本あたり",s.avgCount==null?"—":`${s.avgCount.toFixed(1)}<small>台</small>`],["判断時間",`${s.avgMs.toFixed(2)}<small>ms/台</small>`],["待機場所から",h.buffer?`${n.log.filter(c=>c.fromBuffer).length}<small>回</small>`:"<small>使わない</small>"]];k("tiles").innerHTML=e.map(([c,a])=>`<div class="tile"><div class="l">${c}</div><div class="v">${a}</div></div>`).join("");let t=n.bin,o=nt(t);k("nowTitle").textContent=`積込中のコンテナ No.${t.index}`,k("nowMeter").style.width=`${Math.min(100,o.volUtil*100*1.6)}%`,k("nowText").textContent=`${o.count}台 ・ 容積率 ${(o.volUtil*100).toFixed(1)}% ・ ${$(o.kg)} kg ・ 奥から ${$(o.usedLen/1e3,2)} m まで使用（目盛りは容積率62.5%で満杯）`;let i=k("cards");i.innerHTML=[...n.bins].reverse().map(c=>{let a=nt(c),r=Te(c),u=!c.closed,d=h.viewBin===c.index-1||h.viewBin==null&&u;return`<li><button type="button" class="card${u?" live":""}" data-bin="${c.index-1}" aria-pressed="${d}">
+        <span class="no">No.${c.index}</span>
+        <span class="meta">${a.count}台 ・ 容積 ${(a.volUtil*100).toFixed(1)}% ・ ${$(a.kg)} kg${u?"":` ・ 重心 ${a.cogOffPct>=0?"+":""}${a.cogOffPct.toFixed(1)}%`}</span>
+        <span class="pill ${r?"ok":"ng"}">${u?"積込中":r?"制約OK":"要確認"}</span>
+        <span class="bar2"><i style="width:${Math.min(100,a.volUtil*160)}%"></i></span>
+      </button></li>`}).join(""),i.querySelectorAll(".card").forEach(c=>c.addEventListener("click",()=>{let a=Number(c.dataset.bin),r=n.bins[a];if(!r.closed){ut();return}h.viewBin=a,X(!1),k("backLive").hidden=!1,ht(new Set([...r.placed.map(u=>u.item.id),...n.queue.map(u=>u.id)])),D=!0,G()}))}function ut(){h.viewBin=null,k("backLive").hidden=!0,D=!0,G()}function Le(){let n=k("cmpBtn");n.disabled=!0,n.textContent="計算中…",setTimeout(()=>{let s=R[h.containerId],e=h.total||300,t=[];for(let c of["dblf","learned"])for(let a of[0,3]){let r=new et(s,pt(h.seed),{...Mt,policy:c,buffer:a,lookahead:kt});for(let d=0;d<e;d++)r.step();let u=r.stats();t.push({policy:c,buffer:a,...u,last:nt(r.bin)})}let o=t.reduce((c,a)=>(a.avgFill??0)>(c.avgFill??0)?a:c,t[0]),i={learned:"学習済み（GA）",dblf:"単純な奥詰め"};k("cmp").innerHTML=`<tr><th>判断</th><th>待機</th><th>本数</th><th>容積率</th><th>台/本</th></tr>${t.map(c=>`<tr class="${c===o?"win":""}"><td>${i[c.policy]}</td><td>${c.buffer?`${c.buffer}台`:"なし"}</td><td>${c.containers}</td><td>${c.avgFill==null?"—":`${(c.avgFill*100).toFixed(1)}%`}</td><td>${c.avgCount==null?"—":c.avgCount.toFixed(1)}</td></tr>`).join("")}`,n.disabled=!1,n.textContent=`同じ流れで比べる（${$(e)}台）`},30)}function Ae(){if(k("weights").innerHTML=xt.map(([n,s])=>`<tr><td>${s}</td><td>${at[n].toFixed(2)}</td></tr>`).join(""),tt){let n=tt.test;k("trainInfo").textContent=`学習: ${tt.population}個体 × ${tt.generations}世代。学習に使っていない8通りの流れ（待機場所なし・3台を含む）での平均容積率は、学習済み ${n.learned.fill}%（1本あたり${n.learned.count}台）、単純な奥詰め ${n.dblf.fill}%（${n.dblf.count}台）、手で決めた重み ${n.manual.fill}%。`}}function Ce(){let n=k("container");for(let o of Object.values(R)){let i=document.createElement("option");i.value=o.id,i.textContent=`${o.name}（内寸 ${$(o.L)}×${$(o.W)}×${$(o.H)}）`,n.appendChild(i)}n.value=h.containerId;let s=()=>{st(),Ft("iso")};n.addEventListener("change",()=>{h.containerId=n.value,s()});let e=k("policy"),t=()=>{k("policyNote").textContent=Bt[h.policy].desc};e.addEventListener("change",()=>{h.policy=e.value,t(),st()}),t(),k("buffer").addEventListener("change",o=>{h.buffer=Number(o.target.value),st()}),k("total").addEventListener("change",o=>{h.total=Number(o.target.value),X(h.running),G()}),document.querySelectorAll("[data-speed]").forEach(o=>o.addEventListener("click",()=>{h.speed=Number(o.dataset.speed),document.querySelectorAll("[data-speed]").forEach(i=>i.setAttribute("aria-pressed",String(i===o))),h.speed===0&&(h.anim=null)})),k("startBtn").addEventListener("click",()=>{h.viewBin!=null&&ut(),X(!h.running)}),k("stepBtn").addEventListener("click",()=>{if(O())return;h.viewBin!=null&&ut(),X(!1),h.anim=null;let o=h.sim.step();h.last=o,o.closed&&St(o.closed),qt(),G(),D=!0}),k("resetBtn").addEventListener("click",()=>{h.seed+=1,st()}),k("backLive").addEventListener("click",ut),k("cmpBtn").addEventListener("click",Le),k("cmpBtn").textContent="同じ流れで比べる"}function $e(){let n=k("view");_=new ct(n),document.querySelectorAll("[data-view]").forEach(e=>e.addEventListener("click",()=>Ft(e.dataset.view))),document.querySelectorAll("[data-color]").forEach(e=>e.addEventListener("click",()=>{h.color=e.dataset.color,document.querySelectorAll("[data-color]").forEach(t=>t.setAttribute("aria-pressed",String(t===e))),ht(),D=!0})),n.addEventListener("pointermove",e=>{if(e.buttons)return;let t=Pe(e),o=t?t.item.id:null;o!==h.hover&&(h.hover=o,D=!0),jt(t,e)}),n.addEventListener("pointerleave",()=>{h.hover=null,jt(null),D=!0}),window.addEventListener("resize",()=>{D=!0});let s=()=>Ot();window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",s),new MutationObserver(s).observe(document.documentElement,{attributes:!0,attributeFilter:["data-theme"]})}function Pe(n){if(!U)return null;let s=k("view").getBoundingClientRect(),e=U.ray(n.clientX-s.left,n.clientY-s.top,s.width,s.height),t=null;for(let o of wt().placed){let i=[o.x/1e3,o.z/1e3,o.y/1e3],c=[(o.x+o.ex)/1e3,(o.z+o.h)/1e3,(o.y+o.ey)/1e3],a=-1/0,r=1/0,u=!0;for(let d=0;d<3;d++)if(Math.abs(e.d[d])<1e-9)(e.o[d]<i[d]||e.o[d]>c[d])&&(u=!1);else{let p=(i[d]-e.o[d])/e.d[d],b=(c[d]-e.o[d])/e.d[d];p>b&&([p,b]=[b,p]),a=Math.max(a,p),r=Math.min(r,b)}u&&a<=r&&r>0&&(!t||a<t.t)&&(t={t:a,p:o})}return t?t.p:null}function jt(n,s){let e=k("tip");if(!n){e.hidden=!0;return}let t=n.item,o=R[h.containerId];e.innerHTML=`<b>${t.label}</b> <span class="mono">${t.id}</span><br><span class="mono">${t.ref}${t.ref.includes("概算")?"":" 相当"}</span><br>
+    幅${$(t.w)} × 奥行${$(t.d)} × 高さ${$(t.h)} mm ・ ${$(t.kg,1)} kg<br>
+    ${n.order}台目に積載 ・ 奥から ${$(n.x/1e3,2)} m・${Xt(n,o.W)}・${n.tier+1}段目`;let i=k("viewport").getBoundingClientRect();e.hidden=!1,e.style.left=`${Math.min(s.clientX-i.left+14,i.width-e.offsetWidth-8)}px`,e.style.top=`${Math.min(s.clientY-i.top+14,i.height-e.offsetHeight-8)}px`}function Be(){Ce(),Ae();try{$e()}catch(n){k("viewport").innerHTML=`<p style="padding:16px">3D表示を開始できませんでした（${n.message}）。記録は右側で確認できます。</p>`,_=null}st(),_&&Ft("iso"),requestAnimationFrame(Kt)}Be();})();
+
+</script>
+
+</body>
+</html>

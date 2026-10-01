@@ -1,0 +1,155 @@
+<title>廃家電 リアルタイム積付け</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/*STYLE*/
+/* リアルタイム型の画面: 左に流し方の条件、中央にコンベヤとコンテナ、右にコンテナごとの記録 */
+.ctrl-row { display: flex; gap: 8px; }
+.ctrl-row > * { flex: 1; }
+.ghost.wide { padding: 9px 10px; font-size: 13px; }
+.queue { position: absolute; top: 8px; left: 8px; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; font-size: 12px; max-width: min(260px, calc(100% - 16px)); }
+.queue h4 { margin: 0 0 4px; font-size: 11px; color: var(--muted); font-weight: 700; letter-spacing: 0.05em; }
+.queue ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.queue li { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.queue li .q { font-family: var(--font-num); color: var(--muted); font-size: 10.5px; min-width: 30px; }
+.queue li.pool { font-weight: 700; }
+.queue li.pool .q { color: var(--accent); }
+.banner { position: absolute; top: 8px; right: 8px; background: var(--ink); color: var(--panel); border-radius: var(--r); padding: 6px 10px; font-size: 12.5px; font-weight: 700; }
+.now { display: flex; align-items: baseline; gap: 6px; }
+.meter { height: 10px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--steel); transition: width 0.15s; }
+.cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 330px; overflow: auto; }
+.card { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center; cursor: pointer; background: var(--panel); text-align: left; width: 100%; }
+.card[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.card .no { font-family: var(--font-num); font-weight: 500; font-size: 15px; }
+.card .meta { font-size: 11.5px; color: var(--muted); font-family: var(--font-num); }
+.card .bar2 { grid-column: 1 / -1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.card .bar2 i { display: block; height: 100%; background: var(--steel); }
+.card.live .bar2 i { background: var(--accent); }
+.cmp { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cmp th, .cmp td { white-space: nowrap; padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.cmp th:first-child, .cmp td:first-child { text-align: left; }
+.cmp th { font-size: 11px; color: var(--muted); font-weight: 700; }
+.cmp tr.win td { font-weight: 700; }
+.mini { font-size: 12px; color: var(--muted); margin: 0; }
+.weights { width: 100%; border-collapse: collapse; font-size: 12px; }
+.weights td { padding: 3px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.weights td:last-child { text-align: right; font-family: var(--font-num); white-space: nowrap; }
+</style>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>廃家電 リアルタイム積付け</h1><span class="chip">デモ</span></div>
+    <nav class="modes" aria-label="デモの切り替え">
+      <a href="https://mamoru1126.github.io/container_loading_patterns/">計画型<small>台数が決まっている</small></a>
+      <a href="https://mamoru1126.github.io/container_loading_patterns/online.html" aria-current="page">リアルタイム型<small>順に流れてくる</small></a>
+    </nav>
+    <p class="sub">コンベヤでランダムに流れてくる廃家電を、1台ずつその場で置き場所を判断して積み込みます。コンテナに入らなくなったら締めて、次の空コンテナに切り替えます。先に何が来るかは使わずに判断します。</p>
+  </header>
+
+  <main class="grid">
+    <section class="panel" aria-label="流し方の条件">
+      <h2>流し方の条件</h2>
+      <div class="field">
+        <label for="container">コンテナ</label>
+        <select id="container"></select>
+      </div>
+      <div class="field">
+        <label for="policy">置き場所の判断</label>
+        <select id="policy">
+          <option value="learned">学習済みの判断（遺伝的アルゴリズム）</option>
+          <option value="dblf">単純な奥詰め（比較用）</option>
+        </select>
+        <p class="hint" id="policyNote"></p>
+      </div>
+      <div class="field">
+        <label for="buffer">待機場所（流れてきた家電を一時的に置いておける台数）</label>
+        <select id="buffer">
+          <option value="0" selected>なし（来た順に必ず積む）</option>
+          <option value="1">1台</option>
+          <option value="3">3台</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="total">流す台数</label>
+        <select id="total">
+          <option value="120">120台</option>
+          <option value="300" selected>300台</option>
+          <option value="1000">1,000台</option>
+          <option value="0">止めるまで</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>速さ</label>
+        <div class="seg" role="group" aria-label="速さ" id="speed">
+          <button type="button" data-speed="1" aria-pressed="false">1倍</button>
+          <button type="button" data-speed="3" aria-pressed="true">3倍</button>
+          <button type="button" data-speed="10" aria-pressed="false">10倍</button>
+          <button type="button" data-speed="0" aria-pressed="false">最速</button>
+        </div>
+      </div>
+      <button class="primary" id="startBtn" type="button">流し始める</button>
+      <div class="ctrl-row">
+        <button class="ghost wide" id="stepBtn" type="button">1台だけ進める</button>
+        <button class="ghost wide" id="resetBtn" type="button">最初から（別の流れ）</button>
+      </div>
+      <p class="hint">品目の比率は計画型の標準構成と同じです。寸法は実製品の公称値に±4%程度のばらつきを加えています。</p>
+    </section>
+
+    <section class="stage" aria-label="積込みの様子">
+      <div class="viewport" id="viewport">
+        <canvas id="view" aria-label="コンベヤとコンテナの3D表示"></canvas>
+        <div id="tags"></div>
+        <div class="queue" id="queueBox"><h4>次に流れてくる家電</h4><ol id="queue"></ol></div>
+        <div class="banner" id="banner" hidden></div>
+        <div class="tip" id="tip" hidden></div>
+        <div class="tools">
+          <div class="seg" role="group" aria-label="視点">
+            <button type="button" data-view="iso" aria-pressed="true">斜め</button>
+            <button type="button" data-view="door" aria-pressed="false">扉側</button>
+            <button type="button" data-view="top" aria-pressed="false">真上</button>
+          </div>
+          <div class="seg" role="group" aria-label="色">
+            <button type="button" data-color="real" aria-pressed="true">実物</button>
+            <button type="button" data-color="cat" aria-pressed="false">品目別</button>
+          </div>
+          <button class="ghost" id="backLive" type="button" hidden style="background:var(--panel)">積込中のコンテナに戻る</button>
+        </div>
+      </div>
+      <div class="under">
+        <p class="caption" id="caption"></p>
+        <span class="hint3d">ドラッグで回転 ・ 右ドラッグかShiftで移動 ・ ホイールかピンチで拡大</span>
+      </div>
+    </section>
+
+    <section class="panel sheet" aria-label="積込みの記録">
+      <h2>積込みの記録</h2>
+      <div class="tiles" id="tiles"></div>
+      <div>
+        <h3 style="margin-bottom:6px" id="nowTitle">積込中のコンテナ</h3>
+        <div class="meter"><i id="nowMeter" style="width:0%"></i></div>
+        <p class="mini" id="nowText"></p>
+      </div>
+      <div>
+        <h3 style="margin-bottom:6px">コンテナごとの結果</h3>
+        <ul class="cards" id="cards"></ul>
+      </div>
+      <div>
+        <h3 style="margin-bottom:6px">判断方法の比べ方</h3>
+        <p class="mini" style="margin-bottom:6px">今と同じ家電の流れを、判断方法と待機場所（待機できる台数）を変えて一気に積んだ結果です。本数は最後の積込中のコンテナを含み、容積率と台/本は満載で締めたコンテナの平均です。</p>
+        <table class="cmp" id="cmp"></table>
+        <button class="ghost" id="cmpBtn" type="button" style="margin-top:6px">同じ流れで比べる</button>
+      </div>
+      <details>
+        <summary>学習した判断の中身</summary>
+        <p class="mini" style="margin:6px 0">置ける場所の候補ごとに下の項目を計算し、重みを掛けて足した点数がいちばん小さい場所を選びます。重みは遺伝的アルゴリズムで、学習用の家電の流れを積んだときの平均容積率が最大になるように決めました。</p>
+        <table class="weights" id="weights"></table>
+        <p class="mini" id="trainInfo" style="margin-top:6px"></p>
+      </details>
+    </section>
+  </main>
+</div>
+<script>
+/*APP_SCRIPT*/
+</script>

@@ -135,6 +135,34 @@ function pickWeighted(list, rng) {
 const round5 = (v) => Math.round(v / 5) * 5;
 
 // 台数指定から個体を生成する
+// 1台分の個体を作る（寸法・重量・色にばらつきを与える）
+export function makeItem(t, rng, id, serial) {
+  const sw = 1 + (rng() - 0.5) * 0.08;
+  const sd = 1 + (rng() - 0.5) * 0.08;
+  const sh = 1 + (rng() - 0.5) * 0.06;
+  // テレビやエアコンは型ごとの寸法差が小さいので控えめに
+  const k = t.cat === 'lcd' || t.cat === 'acin' ? 0.4 : 1;
+  const w = round5(t.w * (1 + (sw - 1) * k));
+  const d = round5(t.d * (1 + (sd - 1) * k));
+  const h = round5(t.h * (1 + (sh - 1) * k));
+  const volRatio = (w * d * h) / (t.w * t.d * t.h);
+  const kg = Math.round(t.kg * volRatio * (1 + (rng() - 0.5) * 0.08) * 2) / 2;
+  const palette = PALETTES[t.id] || PALETTES[t.cat];
+  return {
+    id,
+    serial,
+    type: t.id,
+    cat: t.cat,
+    label: t.label,
+    ref: t.ref,
+    w, d, h, kg,
+    color: pickWeighted(palette, rng),
+    wear: 0.93 + rng() * 0.07,
+    variant: rng(),
+  };
+}
+
+// 台数指定から個体を生成する
 export function generateItems(counts, seed = 1) {
   const rng = makeRng(seed);
   const items = [];
@@ -142,33 +170,23 @@ export function generateItems(counts, seed = 1) {
   for (const t of TYPES) {
     const n = Math.max(0, Math.floor(counts[t.id] || 0));
     for (let i = 0; i < n; i++) {
-      const sw = 1 + (rng() - 0.5) * 0.08;
-      const sd = 1 + (rng() - 0.5) * 0.08;
-      const sh = 1 + (rng() - 0.5) * 0.06;
-      // テレビやエアコンは型ごとの寸法差が小さいので控えめに
-      const k = t.cat === 'lcd' || t.cat === 'acin' ? 0.4 : 1;
-      const w = round5(t.w * (1 + (sw - 1) * k));
-      const d = round5(t.d * (1 + (sd - 1) * k));
-      const h = round5(t.h * (1 + (sh - 1) * k));
-      const volRatio = (w * d * h) / (t.w * t.d * t.h);
-      const kg = Math.round(t.kg * volRatio * (1 + (rng() - 0.5) * 0.08) * 2) / 2;
-      const palette = PALETTES[t.id] || PALETTES[t.cat];
       serial += 1;
-      items.push({
-        id: `${t.id}-${String(i + 1).padStart(2, '0')}`,
-        serial,
-        type: t.id,
-        cat: t.cat,
-        label: t.label,
-        ref: t.ref,
-        w, d, h, kg,
-        color: pickWeighted(palette, rng),
-        wear: 0.93 + rng() * 0.07,
-        variant: rng(),
-      });
+      items.push(makeItem(t, rng, `${t.id}-${String(i + 1).padStart(2, '0')}`, serial));
     }
   }
   return items;
+}
+
+// 品目の比率（weights: タイプID → 重み）に従って、ランダムな順で家電が流れてくる列を作る
+export function makeStream(seed = 1, weights = DEFAULT_COUNTS) {
+  const rng = makeRng(seed * 104729 + 7);
+  const list = TYPES.filter((t) => (weights[t.id] || 0) > 0).map((t) => [t, weights[t.id]]);
+  let serial = 0;
+  return function next() {
+    const t = pickWeighted(list, rng);
+    serial += 1;
+    return makeItem(t, rng, `#${String(serial).padStart(3, '0')}`, serial);
+  };
 }
 
 // 合計台数を指定して、初期構成の比率で台数を割り振る

@@ -6,8 +6,9 @@
     "test": "test"
   },
   "scripts": {
-    "test": "node test/engine.test.mjs && node test/ga.test.mjs",
-    "build": "node build.mjs"
+    "test": "node test/engine.test.mjs && node test/ga.test.mjs && node test/online.test.mjs",
+    "build": "node build.mjs",
+    "train": "node test/train-online.mjs 30"
   },
   "keywords": [],
   "author": "",
