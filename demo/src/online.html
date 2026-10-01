@@ -29,9 +29,15 @@
 .card.live .bar2 i { background: var(--accent); }
 .cmp { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .cmp th, .cmp td { white-space: nowrap; padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
-.cmp th:first-child, .cmp td:first-child { text-align: left; }
+.cmp th:first-child, .cmp td:first-child, .cmp th:nth-child(2), .cmp td:nth-child(2) { text-align: left; }
 .cmp th { font-size: 11px; color: var(--muted); font-weight: 700; }
 .cmp tr.win td { font-weight: 700; }
+.cmp tr.cur td:first-child::before { content: '▶ '; color: var(--accent); }
+.cmp td.few { color: var(--ok); font-weight: 700; }
+.nowlist { display: flex; flex-direction: column; gap: 6px; }
+.now { display: block; }
+.now .mini { margin-top: 2px; }
+.card .no small.lane { display: block; font-size: 10.5px; color: var(--muted); font-family: var(--font-ui); }
 .mini { font-size: 12px; color: var(--muted); margin: 0; }
 .weights { width: 100%; border-collapse: collapse; font-size: 12px; }
 .weights td { padding: 3px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -54,6 +60,14 @@
       <div class="field">
         <label for="container">コンテナ</label>
         <select id="container"></select>
+      </div>
+      <div class="field">
+        <label for="sort">積み方</label>
+        <select id="sort">
+          <option value="mixed" selected>混載（どの家電も同じコンテナへ）</option>
+          <option value="sort">家電4品目ごとに仕分け（4本を同時に積む）</option>
+        </select>
+        <p class="hint">仕分けでは、冷蔵庫・冷凍庫／洗濯機・衣類乾燥機／テレビ／エアコンを別々のコンテナに積みます。</p>
       </div>
       <div class="field">
         <label for="policy">置き場所の判断</label>
@@ -128,8 +142,8 @@
       <div class="tiles" id="tiles"></div>
       <div>
         <h3 style="margin-bottom:6px" id="nowTitle">積込中のコンテナ</h3>
-        <div class="meter"><i id="nowMeter" style="width:0%"></i></div>
-        <p class="mini" id="nowText"></p>
+        <div id="nowList" class="nowlist"></div>
+        <p class="mini">目盛りは容積率62.5%で満杯</p>
       </div>
       <div>
         <h3 style="margin-bottom:6px">コンテナごとの結果</h3>
@@ -137,7 +151,7 @@
       </div>
       <div>
         <h3 style="margin-bottom:6px">判断方法の比べ方</h3>
-        <p class="mini" style="margin-bottom:6px">今と同じ家電の流れを、判断方法と待機場所（待機できる台数）を変えて一気に積んだ結果です。本数は最後の積込中のコンテナを含み、容積率と台/本は満載で締めたコンテナの平均です。</p>
+        <p class="mini" style="margin-bottom:6px">今と同じ家電の流れを、積み方・判断方法・待機場所を変えて一気に積んだ結果です。本数は最後に積込中のコンテナも含みます。容積率は満載で締めたコンテナの平均です。▶ は今の設定、緑は本数が最も少ない設定です。</p>
         <table class="cmp" id="cmp"></table>
         <button class="ghost" id="cmpBtn" type="button" style="margin-top:6px">同じ流れで比べる</button>
       </div>

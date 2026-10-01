@@ -40,8 +40,22 @@ export const FEATURES = [
 
 const EPS = 0.5;
 
-export function makeBin(container, index) {
-  return { index, container, placed: [], kg: 0, vol: 0, closed: false };
+// 家電リサイクル法の4品目。仕分けするときは品目ごとに別のコンテナへ積む
+export const GROUPS = [
+  { id: 'fridge', name: '冷蔵庫・冷凍庫', cats: ['fridge', 'freezer'] },
+  { id: 'washer', name: '洗濯機・衣類乾燥機', cats: ['washer', 'drum', 'dryer'] },
+  { id: 'tv', name: 'テレビ', cats: ['lcd', 'crt'] },
+  { id: 'ac', name: 'エアコン', cats: ['acin', 'acout'] },
+];
+export const MIXED = { id: 'mixed', name: '混載', cats: null };
+
+export function groupOf(cat) {
+  return GROUPS.find((g) => g.cats.includes(cat));
+}
+
+// index: 品目（レーン）ごとの通し番号、no: 全体の通し番号
+export function makeBin(container, index, lane = MIXED, no = index) {
+  return { index, no, lane, container, placed: [], kg: 0, vol: 0, closed: false };
 }
 
 function overlap1(a0, a1, b0, b1) {
@@ -242,13 +256,21 @@ export class OnlinePacker {
 }
 
 // 流れてくる家電を順に積む。buffer > 0 なら、待機場所に置いた中から置きやすい1台を選べる
+// sort が true なら、家電4品目ごとに別のコンテナ（レーン）を同時に開いて仕分けて積む
 export class Simulation {
   constructor(container, nextItem, options = {}) {
     this.ct = container;
     this.next = nextItem;
     this.packer = new OnlinePacker(container, options);
     this.bufferSize = options.buffer ?? 0;
-    this.bins = [makeBin(container, 1)];
+    this.sort = !!options.sort;
+    const groups = this.sort ? GROUPS : [MIXED];
+    this.bins = [];
+    this.lanes = groups.map((g, k) => {
+      const bin = makeBin(container, 1, g, k + 1);
+      this.bins.push(bin);
+      return { group: g, k, bin };
+    });
     this.queue = [];
     this.lookahead = options.lookahead ?? 6;
     this.processed = 0;
@@ -257,42 +279,51 @@ export class Simulation {
     this.fill();
   }
 
+  // 混載のときの積込中のコンテナ
   get bin() {
-    return this.bins[this.bins.length - 1];
+    return this.lanes[0].bin;
+  }
+
+  laneOf(item) {
+    if (!this.sort) return this.lanes[0];
+    return this.lanes.find((l) => l.group.cats.includes(item.cat));
   }
 
   fill() {
     while (this.queue.length < this.lookahead + this.bufferSize + 1) this.queue.push(this.next());
   }
 
-  // 1台積む。戻り値: { item, placement, bin, closed: 締めたコンテナ or null }
+  // 1台積む。戻り値: { item, placement, bin, lane, closed: 締めたコンテナ or null }
   step() {
     this.fill();
     const t0 = performance.now();
     const pool = this.queue.slice(0, this.bufferSize + 1);
     let pick = null;
     for (let i = 0; i < pool.length; i++) {
-      const d = this.packer.decide(this.bin, pool[i]);
-      if (d && (!pick || d.s < pick.d.s)) pick = { i, d };
+      const lane = this.laneOf(pool[i]);
+      const d = this.packer.decide(lane.bin, pool[i]);
+      if (d && (!pick || d.s < pick.d.s)) pick = { i, d, lane };
       if (this.packer.policy === 'dblf' && pick) break;
     }
     let closed = null;
     if (!pick) {
-      // どれも入らない: 今のコンテナを締めて次へ
-      closed = this.bin;
+      // どれも入らない: 先頭の家電の行き先のコンテナを締めて、同じ品目の次のコンテナへ
+      const lane = this.laneOf(pool[0]);
+      closed = lane.bin;
       closed.closed = true;
-      this.bins.push(makeBin(this.ct, this.bins.length + 1));
-      const d = this.packer.decide(this.bin, pool[0]);
+      lane.bin = makeBin(this.ct, closed.index + 1, lane.group, this.bins.length + 1);
+      this.bins.push(lane.bin);
+      const d = this.packer.decide(lane.bin, pool[0]);
       if (!d) throw new Error(`${pool[0].label} が空のコンテナにも入りません`);
-      pick = { i: 0, d };
+      pick = { i: 0, d, lane };
     }
     const item = this.queue.splice(pick.i, 1)[0];
-    const placement = this.packer.place(this.bin, item, pick.d);
+    const placement = this.packer.place(pick.lane.bin, item, pick.d);
     const ms = performance.now() - t0;
     this.decideMs += ms;
     this.processed += 1;
     this.fill();
-    const ev = { item, placement, bin: this.bin, closed, ms, fromBuffer: pick.i > 0 };
+    const ev = { item, placement, bin: pick.lane.bin, lane: pick.lane, closed, ms, fromBuffer: pick.i > 0 };
     this.log.push(ev);
     return ev;
   }
