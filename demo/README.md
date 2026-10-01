@@ -1,7 +1,9 @@
 # 廃家電 積付けプランナー（デモ）
 
 リサイクル輸送する廃家電（家電4品目）を、コンテナに積み込むパターンを自動で作るデモです。
-ブラウザだけで動く1ファイルのHTMLにまとめています（`dist/haikaden-planner.html`）。
+ブラウザだけで動く1ファイルのHTMLにまとめています（`dist/haikaden-planner.html`、GitHub Pages 用にはリポジトリ直下の `index.html`）。
+
+公開ページ: https://mamoru1126.github.io/container_loading_patterns/
 
 ## できること
 
@@ -48,7 +50,7 @@
 
 ```sh
 npm test         # 7通りの条件で全案の制約違反がないことを確認
-npm run build    # dist/haikaden-planner.html を作る（esbuild が必要）
+npm run build    # dist/haikaden-planner.html と ../index.html を作る（esbuild が必要）
 node test/screenshot.mjs   # ヘッドレス Chromium で画面を撮る（Playwright が必要）
 ```
 

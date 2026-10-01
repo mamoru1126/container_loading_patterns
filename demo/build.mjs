@@ -36,3 +36,21 @@ mkdirSync(join(here, 'dist'), { recursive: true });
 const dest = join(here, 'dist/haikaden-planner.html');
 writeFileSync(dest, page);
 console.log(`built ${dest} (${(page.length / 1024).toFixed(0)} KB)`);
+
+// GitHub Pages 用: リポジトリ直下に完全な HTML 文書として置く
+const full = `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="廃家電を積み重ねルールと重心を守ってコンテナに積むパターンを自動生成し、3Dで確認できるデモ">
+<style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+${page}
+</body>
+</html>
+`;
+const pagesDest = join(here, '../index.html');
+writeFileSync(pagesDest, full);
+console.log(`built ${pagesDest} (GitHub Pages)`);
